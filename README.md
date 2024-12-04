@@ -576,4 +576,5 @@ protoc \
 ## License
 
 Copyright © 2019 Daniel G. Taylor
+
 Copyright © 2024 The betterproto contributors
