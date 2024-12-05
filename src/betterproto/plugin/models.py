@@ -124,25 +124,26 @@ PROTO_PACKED_TYPES = (
 )
 
 
-def monkey_patch_oneof_index():
-    """
-    The compiler message types are written for proto2, but we read them as proto3.
-    For this to work in the case of the oneof_index fields, which depend on being able
-    to tell whether they were set, we have to treat them as oneof fields. This method
-    monkey patches the generated classes after the fact to force this behaviour.
-    """
-    object.__setattr__(
-        FieldDescriptorProto.__dataclass_fields__["oneof_index"].metadata[
-            "betterproto"
-        ],
-        "group",
-        "oneof_index",
-    )
-    object.__setattr__(
-        Field.__dataclass_fields__["oneof_index"].metadata["betterproto"],
-        "group",
-        "oneof_index",
-    )
+# TODO patch again to make field optional
+# def monkey_patch_oneof_index():
+#     """
+#     The compiler message types are written for proto2, but we read them as proto3.
+#     For this to work in the case of the oneof_index fields, which depend on being able
+#     to tell whether they were set, we have to treat them as oneof fields. This method
+#     monkey patches the generated classes after the fact to force this behaviour.
+#     """
+#     object.__setattr__(
+#         FieldDescriptorProto.__dataclass_fields__["oneof_index"].metadata[
+#             "betterproto"
+#         ],
+#         "group",
+#         "oneof_index",
+#     )
+#     object.__setattr__(
+#         Field.__dataclass_fields__["oneof_index"].metadata["betterproto"],
+#         "group",
+#         "oneof_index",
+#     )
 
 
 def get_comment(
@@ -230,7 +231,7 @@ class ProtoContentBase:
 
     @property
     def deprecated(self) -> bool:
-        return self.proto_obj.options.deprecated
+        return self.proto_obj.options and self.proto_obj.options.deprecated
 
 
 @dataclass
@@ -310,7 +311,10 @@ class OutputTemplate:
         if any(x for x in self.messages.values() if any(x.deprecated_fields)):
             has_deprecated = True
         if any(
-            any(m.proto_obj.options.deprecated for m in s.methods)
+            any(
+                m.proto_obj.options and m.proto_obj.options.deprecated
+                for m in s.methods
+            )
             for s in self.services.values()
         ):
             has_deprecated = True
@@ -405,6 +409,7 @@ def is_oneof(proto_field_obj: FieldDescriptorProto) -> bool:
     True if proto_field_obj is a OneOf, otherwise False.
 
     .. warning::
+        TODO update comment
         Becuase the message from protoc is defined in proto2, and betterproto works with
         proto3, and interpreting the FieldDescriptorProto.oneof_index field requires
         distinguishing between default and unset values (which proto3 doesn't support),
@@ -415,8 +420,7 @@ def is_oneof(proto_field_obj: FieldDescriptorProto) -> bool:
     """
 
     return (
-        not proto_field_obj.proto3_optional
-        and which_one_of(proto_field_obj, "oneof_index")[0] == "oneof_index"
+        not proto_field_obj.proto3_optional and proto_field_obj.oneof_index is not None
     )
 
 
@@ -460,7 +464,12 @@ class FieldCompiler(ProtoContentBase):
         if self.field_wraps:
             args.append(f"wraps={self.field_wraps}")
         if self.optional:
-            args.append(f"optional=True")
+            args.append("optional=True")
+        if self.repeated:
+            args.append("repeated=True")
+        if self.field_type == "enum":
+            t = self.py_type.strip('"')
+            args.append(f"enum_default_value=lambda: {t}.try_value(0)")
         return args
 
     @property
@@ -510,7 +519,7 @@ class FieldCompiler(ProtoContentBase):
 
     @property
     def optional(self) -> bool:
-        return self.proto_obj.proto3_optional
+        return self.proto_obj.proto3_optional or self.field_type == "message"
 
     @property
     def field_type(self) -> str:
@@ -577,6 +586,10 @@ class FieldCompiler(ProtoContentBase):
 @dataclass
 class OneOfFieldCompiler(FieldCompiler):
     @property
+    def optional(self) -> bool:
+        return True
+
+    @property
     def betterproto_field_args(self) -> List[str]:
         args = super().betterproto_field_args
         group = self.parent.proto_obj.oneof_decl[self.proto_obj.oneof_index].name
@@ -586,13 +599,6 @@ class OneOfFieldCompiler(FieldCompiler):
 
 @dataclass
 class PydanticOneOfFieldCompiler(OneOfFieldCompiler):
-    @property
-    def optional(self) -> bool:
-        # Force the optional to be True. This will allow the pydantic dataclass
-        # to validate the object correctly by allowing the field to be let empty.
-        # We add a pydantic validator later to ensure exactly one field is defined.
-        return True
-
     @property
     def pydantic_imports(self) -> Set[str]:
         return {"model_validator"}
