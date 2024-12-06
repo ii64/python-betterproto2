@@ -260,13 +260,9 @@ class OutputTemplate:
     package_proto_obj: FileDescriptorProto
     input_files: List[str] = field(default_factory=list)
     imports_end: Set[str] = field(default_factory=set)
-    datetime_imports: Set[str] = field(default_factory=set)
-    pydantic_imports: Set[str] = field(default_factory=set)
-    builtins_import: bool = False
     messages: Dict[str, "MessageCompiler"] = field(default_factory=dict)
     enums: Dict[str, "EnumDefinitionCompiler"] = field(default_factory=dict)
     services: Dict[str, "ServiceCompiler"] = field(default_factory=dict)
-    imports_type_checking_only: Set[str] = field(default_factory=set)
     pydantic_dataclasses: bool = False
     output: bool = True
     typing_compiler: TypingCompiler = field(default_factory=DirectImportTypingCompiler)
@@ -292,31 +288,6 @@ class OutputTemplate:
             Names of the input files used to build this output.
         """
         return sorted(f.name for f in self.input_files)
-
-    @property
-    def python_module_imports(self) -> Set[str]:
-        imports = set()
-
-        has_deprecated = False
-        if any(m.deprecated for m in self.messages.values()):
-            has_deprecated = True
-        if any(x for x in self.messages.values() if any(x.deprecated_fields)):
-            has_deprecated = True
-        if any(
-            any(
-                m.proto_obj.options and m.proto_obj.options.deprecated
-                for m in s.methods
-            )
-            for s in self.services.values()
-        ):
-            has_deprecated = True
-
-        if has_deprecated:
-            imports.add("warnings")
-
-        if self.builtins_import:
-            imports.add("builtins")
-        return imports
 
 
 @dataclass
@@ -432,10 +403,6 @@ class FieldCompiler(ProtoContentBase):
             self.parent.fields.append(self)
         super().__post_init__()
 
-    def ready(self) -> None:
-        # Check for new imports
-        self.add_imports_to(self.output_file)
-
     def get_field_string(self) -> str:
         """Construct string representation of this field as a field."""
         name = f"{self.py_name}"
@@ -465,30 +432,10 @@ class FieldCompiler(ProtoContentBase):
         return args
 
     @property
-    def datetime_imports(self) -> Set[str]:
-        imports = set()
-        annotation = self.annotation
-        # FIXME: false positives - e.g. `MyDatetimedelta`
-        if "timedelta" in annotation:
-            imports.add("timedelta")
-        if "datetime" in annotation:
-            imports.add("datetime")
-        return imports
-
-    @property
-    def pydantic_imports(self) -> Set[str]:
-        return set()
-
-    @property
     def use_builtins(self) -> bool:
         return self.py_type in self.parent.builtins_types or (
             self.py_type == self.py_name and self.py_name in dir(builtins)
         )
-
-    def add_imports_to(self, output_file: OutputTemplate) -> None:
-        output_file.datetime_imports.update(self.datetime_imports)
-        output_file.pydantic_imports.update(self.pydantic_imports)
-        output_file.builtins_import = output_file.builtins_import or self.use_builtins
 
     @property
     def field_wraps(self) -> Optional[str]:
@@ -587,13 +534,6 @@ class OneOfFieldCompiler(FieldCompiler):
         group = self.parent.proto_obj.oneof_decl[self.proto_obj.oneof_index].name
         args.append(f'group="{group}"')
         return args
-
-
-@dataclass
-class PydanticOneOfFieldCompiler(OneOfFieldCompiler):
-    @property
-    def pydantic_imports(self) -> Set[str]:
-        return {"model_validator"}
 
 
 @dataclass
@@ -723,14 +663,6 @@ class ServiceMethodCompiler(ProtoContentBase):
     def __post_init__(self) -> None:
         # Add method to service
         self.parent.methods.append(self)
-
-        self.output_file.imports_type_checking_only.add("import grpclib.server")
-        self.output_file.imports_type_checking_only.add(
-            "from betterproto.grpc.grpclib_client import MetadataLike"
-        )
-        self.output_file.imports_type_checking_only.add(
-            "from grpclib.metadata import Deadline"
-        )
 
         super().__post_init__()  # check for unset fields
 
