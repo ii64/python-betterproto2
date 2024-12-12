@@ -785,7 +785,7 @@ class ProtoClassMetadata:
     def _get_default_gen(
         cls: Type["Message"], fields: Iterable[dataclasses.Field]
     ) -> Dict[str, Callable[[], Any]]:
-        return {field.name: cls._get_field_default_gen(field) for field in fields}
+        return {field.name: field.default_factory for field in fields}
 
     @staticmethod
     def _get_cls_by_field(
@@ -1044,40 +1044,6 @@ class Message(ABC):
             # ignore warnings when initialising deprecated field defaults
             warnings.filterwarnings("ignore", category=DeprecationWarning)
             return self._betterproto.default_gen[field_name]()
-
-    @classmethod
-    def _get_field_default_gen(cls, field: dataclasses.Field) -> Any:
-        if field.metadata["betterproto"].optional:
-            return type(None)
-
-        t = cls._type_hint(field.name)
-
-        is_310_union = isinstance(t, _types_UnionType)
-        if hasattr(t, "__origin__") or is_310_union:
-            if is_310_union or t.__origin__ is Union:
-                # This is an optional field (either wrapped, or using proto3
-                # field presence). For setting the default we really don't care
-                # what kind of field it is.
-                return type(None)
-            if t.__origin__ is list:
-                # This is some kind of list (repeated) field.
-                return list
-            if t.__origin__ is dict:
-                # This is some kind of map (dict in Python).
-                return dict
-            return t
-        if issubclass(t, Enum):
-            # Enums always default to zero.
-            return t.try_value
-        if t is datetime:
-            # Offsets are relative to 1970-01-01T00:00:00Z
-            return datetime_default_gen
-        # In proto 3, message fields are always optional
-        if issubclass(t, Message):
-            return type(None)
-        # This is either a primitive scalar or another message type. Calling
-        # it should result in its zero value.
-        return t
 
     def _postprocess_single(
         self, wire_type: int, meta: FieldMetadata, field_name: str, value: Any
