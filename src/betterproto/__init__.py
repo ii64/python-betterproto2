@@ -574,7 +574,6 @@ def _serialize_single(
     proto_type: str,
     value: Any,
     *,
-    serialize_empty: bool = False,
     wraps: str = "",
 ) -> bytes:
     """Serializes a single field and value."""
@@ -591,9 +590,8 @@ def _serialize_single(
         key = encode_varint((field_number << 3) | 1)
         output += key + value
     elif proto_type in WIRE_LEN_DELIM_TYPES:
-        if len(value) or serialize_empty or wraps:
-            key = encode_varint((field_number << 3) | 2)
-            output += key + encode_varint(len(value)) + value
+        key = encode_varint((field_number << 3) | 2)
+        output += key + encode_varint(len(value)) + value
     else:
         raise NotImplementedError(proto_type)
 
@@ -842,26 +840,10 @@ class Message(ABC):
     """
 
     _unknown_fields: bytes
-    _group_current: Dict[str, str]
     _betterproto_meta: ClassVar[ProtoClassMetadata]
 
     def __post_init__(self) -> None:
-        # # Keep track of whether every field was default
-        # all_sentinel = True
-
-        # Set current field of each group after `__init__` has already been run.
-        group_current: Dict[str, Optional[str]] = {}
-        for field_name, meta in self._betterproto.meta_by_field_name.items():
-            if meta.group:
-                group_current.setdefault(meta.group)
-
-                value = self.__getattribute__(field_name)
-                if value is not None:
-                    group_current[meta.group] = field_name
-
-        # Now that all the defaults are set, reset it!
-        self.__dict__["_unknown_fields"] = b""
-        self.__dict__["_group_current"] = group_current
+        self._unknown_fields = b""
 
     def __eq__(self, other) -> bool:
         if type(self) is not type(other):
@@ -899,18 +881,6 @@ class Message(ABC):
     # def __rich_repr__(self) -> Iterable[Tuple[str, Any, Any]]:
     #     for field_name in self._betterproto.sorted_field_names:
     #         yield field_name, self.__getattribute__(field_name), PLACEHOLDER
-
-    def __setattr__(self, attr: str, value: Any) -> None:
-        if hasattr(self, "_group_current"):  # __post_init__ had already run
-            if attr in self._betterproto.oneof_group_by_field:
-                group = self._betterproto.oneof_group_by_field[attr]
-                for field in self._betterproto.oneof_field_by_group[group]:
-                    if field.name == attr:
-                        self._group_current[group] = field.name
-                    else:
-                        super().__setattr__(field.name, None)
-
-        super().__setattr__(attr, value)
 
     def __bool__(self) -> bool:
         """True if the Message has any fields with non-default values."""
@@ -978,26 +948,8 @@ class Message(ABC):
                     # wrapper types and proto3 field presence/optional fields.
                     continue
 
-                # Being selected in a a group means this field is the one that is
-                # currently set in a `oneof` group, so it must be serialized even
-                # if the value is the default zero value.
-                #
-                # Note that proto3 field presence/optional fields are put in a
-                # synthetic single-item oneof by protoc, which helps us ensure we
-                # send the value even if the value is the default zero value.
-                selected_in_group = bool(meta.group) or meta.optional
-
-                include_default_value_for_oneof = self._include_default_value_for_oneof(
-                    field_name=field_name, meta=meta
-                )
-
-                if value == self._get_field_default(field_name) and not (
-                    selected_in_group or include_default_value_for_oneof
-                ):
-                    # Default (zero) values are not serialized. Two exceptions are
-                    # if this is the selected oneof item or if we know we have to
-                    # serialize an empty message (i.e. zero value was explicitly
-                    # set by the user).
+                if value == self._get_field_default(field_name):
+                    # Default (zero) values are not serialized.
                     continue
 
                 if isinstance(value, list):
@@ -1017,7 +969,6 @@ class Message(ABC):
                                     meta.proto_type,
                                     item,
                                     wraps=meta.wraps or "",
-                                    serialize_empty=True,
                                 )
                                 # if it's an empty message it still needs to be represented
                                 # as an item in the repeated list
@@ -1033,24 +984,11 @@ class Message(ABC):
                             _serialize_single(meta.number, meta.proto_type, sk + sv)
                         )
                 else:
-                    # If we have an empty string and we're including the default value for
-                    # a oneof, make sure we serialize it. This ensures that the byte string
-                    # output isn't simply an empty string. This also ensures that round trip
-                    # serialization will keep `which_one_of` calls consistent.
-                    serialize_empty = False
-                    if (
-                        isinstance(value, str)
-                        and value == ""
-                        and include_default_value_for_oneof
-                    ):
-                        serialize_empty = True
-
                     stream.write(
                         _serialize_single(
                             meta.number,
                             meta.proto_type,
                             value,
-                            serialize_empty=serialize_empty or bool(selected_in_group),
                             wraps=meta.wraps or "",
                         )
                     )
@@ -1109,6 +1047,9 @@ class Message(ABC):
 
     @classmethod
     def _get_field_default_gen(cls, field: dataclasses.Field) -> Any:
+        if field.metadata["betterproto"].optional:
+            return type(None)
+
         t = cls._type_hint(field.name)
 
         is_310_union = isinstance(t, _types_UnionType)
@@ -1180,13 +1121,6 @@ class Message(ABC):
                 value = self._betterproto.cls_by_field[field_name]().parse(value)
 
         return value
-
-    def _include_default_value_for_oneof(
-        self, field_name: str, meta: FieldMetadata
-    ) -> bool:
-        return (
-            meta.group is not None and self._group_current.get(meta.group) == field_name
-        )
 
     def load(
         self: T,
@@ -1357,23 +1291,9 @@ class Message(ABC):
             cased_name = casing(field_name).rstrip("_")  # type: ignore
             if meta.proto_type == TYPE_MESSAGE:
                 if isinstance(value, datetime):
-                    if (
-                        value != DATETIME_ZERO
-                        or include_default_values
-                        or self._include_default_value_for_oneof(
-                            field_name=field_name, meta=meta
-                        )
-                    ):
-                        output[cased_name] = _Timestamp.timestamp_to_json(value)
+                    output[cased_name] = _Timestamp.timestamp_to_json(value)
                 elif isinstance(value, timedelta):
-                    if (
-                        value != timedelta(0)
-                        or include_default_values
-                        or self._include_default_value_for_oneof(
-                            field_name=field_name, meta=meta
-                        )
-                    ):
-                        output[cased_name] = _Duration.delta_to_json(value)
+                    output[cased_name] = _Duration.delta_to_json(value)
                 elif meta.wraps:
                     if value is not None or include_default_values:
                         output[cased_name] = value
@@ -1403,13 +1323,7 @@ class Message(ABC):
 
                 if value or include_default_values:
                     output[cased_name] = output_map
-            elif (
-                value != self._get_field_default(field_name)
-                or include_default_values
-                or self._include_default_value_for_oneof(
-                    field_name=field_name, meta=meta
-                )
-            ):
+            elif value != self._get_field_default(field_name) or include_default_values:
                 if meta.proto_type in INT_64_TYPES:
                     if field_is_repeated:
                         output[cased_name] = [str(n) for n in value]
@@ -1680,13 +1594,7 @@ class Message(ABC):
 
                 if value or include_default_values:
                     output[cased_name] = value
-            elif (
-                value != self._get_field_default(field_name)
-                or include_default_values
-                or self._include_default_value_for_oneof(
-                    field_name=field_name, meta=meta
-                )
-            ):
+            elif value != self._get_field_default(field_name) or include_default_values:
                 output[cased_name] = value
         return output
 
@@ -1796,10 +1704,18 @@ def which_one_of(message: Message, group_name: str) -> Tuple[str, Optional[Any]]
     Tuple[:class:`str`, Any]
         The field name and the value for that field.
     """
-    field_name = message._group_current.get(group_name)
-    if not field_name:
-        return "", None
-    return field_name, getattr(message, field_name)
+    field_name, value = "", None
+    for field in message._betterproto.oneof_field_by_group[group_name]:
+        v = getattr(message, field.name)
+
+        if v is not None:
+            if field_name:
+                raise RuntimeError(
+                    f"more than one field set in oneof: {field.name} and {field_name}"
+                )
+            field_name, value = field.name, v
+
+    return field_name, value
 
 
 # Circular import workaround: google.protobuf depends on base classes defined above.
