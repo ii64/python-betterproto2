@@ -1,7 +1,6 @@
 import keyword
 import re
 
-
 # Word delimiters and symbols that will not be preserved when re-casing.
 # language=PythonRegExp
 SYMBOLS = "[^a-zA-Z0-9]*"
@@ -47,9 +46,7 @@ def snake_case(value: str, strict: bool = True) -> str:
         elif is_start:
             delimiter_count = len(symbols)
         elif word.isupper() or word.islower():
-            delimiter_count = max(
-                1, len(symbols)
-            )  # Preserve all delimiters if not strict.
+            delimiter_count = max(1, len(symbols))  # Preserve all delimiters if not strict.
         else:
             delimiter_count = len(symbols) + 1  # Extra underscore for leading capital.
 

@@ -8,16 +8,12 @@ import pytest
 
 from tests.output_betterproto.timestamp_dict_encode import Test
 
-
 # Current World Timezone range (UTC-12 to UTC+14)
 MIN_UTC_OFFSET_MIN = -12 * 60
 MAX_UTC_OFFSET_MIN = 14 * 60
 
 # Generate all timezones in range in 15 min increments
-timezones = [
-    timezone(timedelta(minutes=x))
-    for x in range(MIN_UTC_OFFSET_MIN, MAX_UTC_OFFSET_MIN + 1, 15)
-]
+timezones = [timezone(timedelta(minutes=x)) for x in range(MIN_UTC_OFFSET_MIN, MAX_UTC_OFFSET_MIN + 1, 15)]
 
 
 @pytest.mark.parametrize("tz", timezones)

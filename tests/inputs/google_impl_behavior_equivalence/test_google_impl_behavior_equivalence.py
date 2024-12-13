@@ -7,7 +7,6 @@ import pytest
 from google.protobuf import json_format
 from google.protobuf.timestamp_pb2 import Timestamp
 
-import betterproto
 from tests.output_betterproto.google_impl_behavior_equivalence import (
     Empty,
     Foo,
@@ -72,10 +71,7 @@ def test_datetime_clamping(dt):  # see #407
     assert bytes(Spam(dt)) == ReferenceSpam(ts=ts).SerializeToString()
     message_bytes = bytes(Spam(dt))
 
-    assert (
-        Spam().parse(message_bytes).ts.timestamp()
-        == ReferenceSpam.FromString(message_bytes).ts.seconds
-    )
+    assert Spam().parse(message_bytes).ts.timestamp() == ReferenceSpam.FromString(message_bytes).ts.seconds
 
 
 def test_empty_message_field():

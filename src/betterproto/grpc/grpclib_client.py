@@ -15,15 +15,12 @@ from typing import (
 
 import grpclib.const
 
-
 if TYPE_CHECKING:
     from grpclib.client import Channel
     from grpclib.metadata import Deadline
 
     from .._types import (
-        ST,
         IProtoMessage,
-        Message,
         T,
     )
 
@@ -156,9 +153,7 @@ class ServiceStub(ABC):
             **self.__resolve_request_kwargs(timeout, deadline, metadata),
         ) as stream:
             await stream.send_request()
-            sending_task = asyncio.ensure_future(
-                self._send_messages(stream, request_iterator)
-            )
+            sending_task = asyncio.ensure_future(self._send_messages(stream, request_iterator))
             try:
                 async for response in stream:
                     yield response
