@@ -13,10 +13,7 @@ packages = [
 
 [tool.poetry.dependencies]
 python = "^3.8"
-# The Ruff version is pinned. To update it, also update it in .pre-commit-config.yaml
-ruff = { version = "~0.7.4", optional = true }
 grpclib = "^0.4.1"
-jinja2 = { version = ">=3.0.3", optional = true }
 python-dateutil = "^2.8"
 typing-extensions = "^4.7.1"
 betterproto-rust-codec = { version = "0.1.1", optional = true }
@@ -24,13 +21,14 @@ betterproto-rust-codec = { version = "0.1.1", optional = true }
 [tool.poetry.group.dev.dependencies]
 asv = "^0.4.2"
 bpython = "^0.19"
-jinja2 = ">=3.0.3"
 mypy = "^1.11.2"
 pre-commit = "^2.17.0"
 grpcio-tools = "^1.54.2"
 tox = "^4.0.0"
 mkdocs-material = {version = "^9.5.49", python = ">=3.10"}
 mkdocstrings = {version = "^0.27.0", python = ">=3.10", extras = ["python"]}
+# The Ruff version is pinned. To update it, also update it in .pre-commit-config.yaml
+ruff = { version = "~0.7.4" }
 
 [tool.poetry.group.test.dependencies]
 poethepoet = ">=0.9.0"
@@ -47,7 +45,6 @@ tomlkit = ">=0.7.0"
 protoc-gen-python_betterproto = "betterproto2.plugin:main"
 
 [tool.poetry.extras]
-compiler = ["ruff", "jinja2"]
 rust-codec = ["betterproto-rust-codec"]
 
 [tool.ruff]
@@ -74,10 +71,6 @@ select = [
 combine-as-imports = true
 
 # Dev workflow tasks
-
-[tool.poe.tasks.generate]
-script = "tests.generate:main"
-help = "Generate test cases (do this once before running test)"
 
 [tool.poe.tasks.test]
 cmd = "pytest"
@@ -127,31 +120,22 @@ rm -rf .asv .coverage .mypy_cache .pytest_cache
 """
 help = "Clean out generated files from the workspace"
 
-[tool.poe.tasks.generate_lib]
-cmd = """
-protoc
-    --plugin=protoc-gen-custom=src/betterproto2/plugin/main.py
-    --custom_opt=INCLUDE_GOOGLE
-    --custom_out=src/betterproto/lib/std
-    -I /usr/local/include/
-    /usr/local/include/google/protobuf/**/*.proto
+[tool.poe.tasks.pull-compiled-tests]
+shell  = """
+rm -rf tests/output_* &&
+git clone https://github.com/betterproto/python-betterproto2-compiler --branch compiled-test-files --single-branch compiled_files &&
+mv compiled_files/tests_betterproto tests/output_betterproto &&
+mv compiled_files/tests_betterproto_pydantic tests/output_betterproto_pydantic &&
+mv compiled_files/tests_reference tests/output_reference &&
+rm -rf compiled_files
 """
-help = "Regenerate the types in betterproto.lib.std.google"
+help = "Pulls the compiled test files from the betterproto2-compiler repository"
 
 # CI tasks
 
 [tool.poe.tasks.full-test]
 shell = "poe generate && tox"
 help = "Run tests with multiple pythons"
-
-[tool.doc8]
-paths = ["docs"]
-max_line_length = 88
-
-[tool.doc8.ignore_path_errors]
-"docs/migrating.rst" = [
-    "D001",  # contains table which is longer than 88 characters long
-]
 
 [tool.coverage.run]
 omit = ["betterproto/tests/*"]

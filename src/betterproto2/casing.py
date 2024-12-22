@@ -1,6 +1,8 @@
 import keyword
 import re
 
+# TODO it should be possible to delete this file
+
 # Word delimiters and symbols that will not be preserved when re-casing.
 # language=PythonRegExp
 SYMBOLS = "[^a-zA-Z0-9]*"
