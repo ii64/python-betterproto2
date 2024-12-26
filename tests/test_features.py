@@ -1,5 +1,4 @@
 import json
-from dataclasses import dataclass
 from datetime import (
     datetime,
     timedelta,
@@ -8,24 +7,13 @@ from inspect import (
     Parameter,
     signature,
 )
-from typing import (
-    List,
-    Optional,
-)
 from unittest.mock import ANY
 
 import betterproto2
 
 
 def test_class_init():
-    @dataclass
-    class Bar(betterproto2.Message):
-        name: str = betterproto2.string_field(1)
-
-    @dataclass
-    class Foo(betterproto2.Message):
-        name: str = betterproto2.string_field(1)
-        child: Bar = betterproto2.message_field(2)
+    from tests.output_betterproto.features import Bar, Foo
 
     foo = Foo(name="foo", child=Bar(name="bar"))
 
@@ -34,40 +22,26 @@ def test_class_init():
 
 
 def test_enum_as_int_json():
-    class TestEnum(betterproto2.Enum):
-        ZERO = 0
-        ONE = 1
-
-    @dataclass
-    class Foo(betterproto2.Message):
-        bar: TestEnum = betterproto2.enum_field(1, enum_default_value=lambda: TestEnum.try_value(0))
+    from tests.output_betterproto.features import Enum, EnumMsg
 
     # JSON strings are supported, but ints should still be supported too.
-    foo = Foo().from_dict({"bar": 1})
-    assert foo.bar == TestEnum.ONE
+    enum_msg = EnumMsg().from_dict({"enum": 1})
+    assert enum_msg.enum == Enum.ONE
 
     # Plain-ol'-ints should serialize properly too.
-    foo.bar = 1
-    assert foo.to_dict() == {"bar": "ONE"}
+    enum_msg.enum = 1
+    assert enum_msg.to_dict() == {"enum": "ONE"}
 
     # Similar expectations for pydict
-    foo = Foo().from_pydict({"bar": 1})
-    assert foo.bar == TestEnum.ONE
-    assert foo.to_pydict() == {"bar": TestEnum.ONE}
+    enum_msg = EnumMsg().from_dict({"enum": 1})
+    assert enum_msg.enum == Enum.ONE
+    assert enum_msg.to_pydict() == {"enum": Enum.ONE}
 
 
 def test_unknown_fields():
-    @dataclass
-    class Newer(betterproto2.Message):
-        foo: bool = betterproto2.bool_field(1)
-        bar: int = betterproto2.int32_field(2)
-        baz: str = betterproto2.string_field(3)
+    from tests.output_betterproto.features import Newer, Older
 
-    @dataclass
-    class Older(betterproto2.Message):
-        foo: bool = betterproto2.bool_field(1)
-
-    newer = Newer(foo=True, bar=1, baz="Hello")
+    newer = Newer(x=True, y=1, z="Hello")
     serialized_newer = bytes(newer)
 
     # Unknown fields in `Newer` should round trip with `Older`
@@ -79,72 +53,58 @@ def test_unknown_fields():
 
 
 def test_oneof_support():
-    @dataclass
-    class Sub(betterproto2.Message):
-        val: int = betterproto2.int32_field(1)
+    from tests.output_betterproto.features import IntMsg, OneofMsg
 
-    @dataclass
-    class Foo(betterproto2.Message):
-        bar: int = betterproto2.int32_field(1, optional=True, group="group1")
-        baz: str = betterproto2.string_field(2, optional=True, group="group1")
-        sub: Sub = betterproto2.message_field(3, optional=True, group="group2")
-        abc: str = betterproto2.string_field(4, optional=True, group="group2")
+    msg = OneofMsg()
 
-    foo = Foo()
+    assert betterproto2.which_one_of(msg, "group1")[0] == ""
 
-    assert betterproto2.which_one_of(foo, "group1")[0] == ""
+    msg.x = 1
+    assert betterproto2.which_one_of(msg, "group1")[0] == "x"
 
-    foo.bar = 1
-    assert betterproto2.which_one_of(foo, "group1")[0] == "bar"
+    msg.x = None
+    msg.y = "test"
+    assert betterproto2.which_one_of(msg, "group1")[0] == "y"
 
-    foo.bar = None
-    foo.baz = "test"
-    assert betterproto2.which_one_of(foo, "group1")[0] == "baz"
+    msg.a = IntMsg(val=1)
+    assert betterproto2.which_one_of(msg, "group2")[0] == "a"
 
-    foo.sub = Sub(val=1)
-    assert betterproto2.which_one_of(foo, "group2")[0] == "sub"
-
-    foo.sub = None
-    foo.abc = "test"
-    assert betterproto2.which_one_of(foo, "group2")[0] == "abc"
+    msg.a = None
+    msg.b = "test"
+    assert betterproto2.which_one_of(msg, "group2")[0] == "b"
 
     # Group 1 shouldn't be touched
-    assert betterproto2.which_one_of(foo, "group1")[0] == "baz"
+    assert betterproto2.which_one_of(msg, "group1")[0] == "y"
 
     # Zero value should always serialize for one-of
-    foo = Foo(bar=0)
-    assert betterproto2.which_one_of(foo, "group1")[0] == "bar"
-    assert bytes(foo) == b"\x08\x00"
+    msg = OneofMsg(x=0)
+    assert betterproto2.which_one_of(msg, "group1")[0] == "x"
+    assert bytes(msg) == b"\x08\x00"
 
     # Round trip should also work
-    foo2 = Foo().parse(bytes(foo))
-    assert betterproto2.which_one_of(foo2, "group1")[0] == "bar"
-    assert foo.bar == 0
-    assert betterproto2.which_one_of(foo2, "group2")[0] == ""
+    msg = OneofMsg().parse(bytes(msg))
+    assert betterproto2.which_one_of(msg, "group1")[0] == "x"
+    assert msg.x == 0
+    assert betterproto2.which_one_of(msg, "group2")[0] == ""
 
 
 def test_json_casing():
-    @dataclass
-    class CasingTest(betterproto2.Message):
-        pascal_case: int = betterproto2.int32_field(1)
-        camel_case: int = betterproto2.int32_field(2)
-        snake_case: int = betterproto2.int32_field(3)
-        kabob_case: int = betterproto2.int32_field(4)
+    from tests.output_betterproto.features import JsonCasingMsg
 
     # Parsing should accept almost any input
-    test = CasingTest().from_dict({"PascalCase": 1, "camelCase": 2, "snake_case": 3, "kabob-case": 4})
+    msg = JsonCasingMsg().from_dict({"PascalCase": 1, "camelCase": 2, "snake_case": 3, "kabob-case": 4})
 
-    assert test == CasingTest(1, 2, 3, 4)
+    assert msg == JsonCasingMsg(1, 2, 3, 4)
 
     # Serializing should be strict.
-    assert json.loads(test.to_json()) == {
+    assert json.loads(msg.to_json()) == {
         "pascalCase": 1,
         "camelCase": 2,
         "snakeCase": 3,
         "kabobCase": 4,
     }
 
-    assert json.loads(test.to_json(casing=betterproto2.Casing.SNAKE)) == {
+    assert json.loads(msg.to_json(casing=betterproto2.Casing.SNAKE)) == {
         "pascal_case": 1,
         "camel_case": 2,
         "snake_case": 3,
@@ -153,39 +113,34 @@ def test_json_casing():
 
 
 def test_dict_casing():
-    @dataclass
-    class CasingTest(betterproto2.Message):
-        pascal_case: int = betterproto2.int32_field(1)
-        camel_case: int = betterproto2.int32_field(2)
-        snake_case: int = betterproto2.int32_field(3)
-        kabob_case: int = betterproto2.int32_field(4)
+    from tests.output_betterproto.features import JsonCasingMsg
 
     # Parsing should accept almost any input
-    test = CasingTest().from_dict({"PascalCase": 1, "camelCase": 2, "snake_case": 3, "kabob-case": 4})
+    msg = JsonCasingMsg().from_dict({"PascalCase": 1, "camelCase": 2, "snake_case": 3, "kabob-case": 4})
 
-    assert test == CasingTest(1, 2, 3, 4)
+    assert msg == JsonCasingMsg(1, 2, 3, 4)
 
     # Serializing should be strict.
-    assert test.to_dict() == {
+    assert msg.to_dict() == {
         "pascalCase": 1,
         "camelCase": 2,
         "snakeCase": 3,
         "kabobCase": 4,
     }
-    assert test.to_pydict() == {
+    assert msg.to_pydict() == {
         "pascalCase": 1,
         "camelCase": 2,
         "snakeCase": 3,
         "kabobCase": 4,
     }
 
-    assert test.to_dict(casing=betterproto2.Casing.SNAKE) == {
+    assert msg.to_dict(casing=betterproto2.Casing.SNAKE) == {
         "pascal_case": 1,
         "camel_case": 2,
         "snake_case": 3,
         "kabob_case": 4,
     }
-    assert test.to_pydict(casing=betterproto2.Casing.SNAKE) == {
+    assert msg.to_pydict(casing=betterproto2.Casing.SNAKE) == {
         "pascal_case": 1,
         "camel_case": 2,
         "snake_case": 3,
@@ -194,48 +149,43 @@ def test_dict_casing():
 
 
 def test_optional_flag():
-    @dataclass
-    class Request(betterproto2.Message):
-        flag: Optional[bool] = betterproto2.message_field(1, wraps=betterproto2.TYPE_BOOL)
+    from tests.output_betterproto.features import OptionalBoolMsg
 
     # Serialization of not passed vs. set vs. zero-value.
-    assert bytes(Request()) == b""
-    assert bytes(Request(flag=True)) == b"\n\x02\x08\x01"
-    assert bytes(Request(flag=False)) == b"\n\x00"
+    assert bytes(OptionalBoolMsg()) == b""
+    assert bytes(OptionalBoolMsg(field=True)) == b"\n\x02\x08\x01"
+    assert bytes(OptionalBoolMsg(field=False)) == b"\n\x00"
 
     # Differentiate between not passed and the zero-value.
-    assert Request().parse(b"").flag is None
-    assert Request().parse(b"\n\x00").flag is False
+    assert OptionalBoolMsg().parse(b"").field is None
+    assert OptionalBoolMsg().parse(b"\n\x00").field is False
 
 
 def test_optional_datetime_to_dict():
-    @dataclass
-    class Request(betterproto2.Message):
-        date: Optional[datetime] = betterproto2.message_field(1, optional=True)
+    from tests.output_betterproto.features import OptionalDatetimeMsg
 
     # Check dict serialization
-    assert Request().to_dict() == {}
-    assert Request().to_dict(include_default_values=True) == {"date": None}
-    assert Request(date=datetime(2020, 1, 1)).to_dict() == {"date": "2020-01-01T00:00:00Z"}
-    assert Request(date=datetime(2020, 1, 1)).to_dict(include_default_values=True) == {"date": "2020-01-01T00:00:00Z"}
+    assert OptionalDatetimeMsg().to_dict() == {}
+    assert OptionalDatetimeMsg().to_dict(include_default_values=True) == {"field": None}
+    assert OptionalDatetimeMsg(field=datetime(2020, 1, 1)).to_dict() == {"field": "2020-01-01T00:00:00Z"}
+    assert OptionalDatetimeMsg(field=datetime(2020, 1, 1)).to_dict(include_default_values=True) == {
+        "field": "2020-01-01T00:00:00Z"
+    }
 
     # Check pydict serialization
-    assert Request().to_pydict() == {}
-    assert Request().to_pydict(include_default_values=True) == {"date": None}
-    assert Request(date=datetime(2020, 1, 1)).to_pydict() == {"date": datetime(2020, 1, 1)}
-    assert Request(date=datetime(2020, 1, 1)).to_pydict(include_default_values=True) == {"date": datetime(2020, 1, 1)}
+    assert OptionalDatetimeMsg().to_pydict() == {}
+    assert OptionalDatetimeMsg().to_pydict(include_default_values=True) == {"field": None}
+    assert OptionalDatetimeMsg(field=datetime(2020, 1, 1)).to_pydict() == {"field": datetime(2020, 1, 1)}
+    assert OptionalDatetimeMsg(field=datetime(2020, 1, 1)).to_pydict(include_default_values=True) == {
+        "field": datetime(2020, 1, 1)
+    }
 
 
 def test_to_json_default_values():
-    @dataclass
-    class TestMessage(betterproto2.Message):
-        some_int: int = betterproto2.int32_field(1)
-        some_double: float = betterproto2.double_field(2)
-        some_str: str = betterproto2.string_field(3)
-        some_bool: bool = betterproto2.bool_field(4)
+    from tests.output_betterproto.features import MsgA
 
     # Empty dict
-    test = TestMessage().from_dict({})
+    test = MsgA().from_dict({})
 
     assert json.loads(test.to_json(include_default_values=True)) == {
         "someInt": 0,
@@ -245,7 +195,7 @@ def test_to_json_default_values():
     }
 
     # All default values
-    test = TestMessage().from_dict({"someInt": 0, "someDouble": 0.0, "someStr": "", "someBool": False})
+    test = MsgA().from_dict({"someInt": 0, "someDouble": 0.0, "someStr": "", "someBool": False})
 
     assert json.loads(test.to_json(include_default_values=True)) == {
         "someInt": 0,
@@ -256,15 +206,10 @@ def test_to_json_default_values():
 
 
 def test_to_dict_default_values():
-    @dataclass
-    class TestMessage(betterproto2.Message):
-        some_int: int = betterproto2.int32_field(1)
-        some_double: float = betterproto2.double_field(2)
-        some_str: str = betterproto2.string_field(3)
-        some_bool: bool = betterproto2.bool_field(4)
+    from tests.output_betterproto.features import MsgA, MsgB
 
     # Empty dict
-    test = TestMessage()
+    test = MsgA()
 
     assert test.to_dict(include_default_values=True) == {
         "someInt": 0,
@@ -281,18 +226,7 @@ def test_to_dict_default_values():
     }
 
     # Some default and some other values
-    @dataclass
-    class TestMessage2(betterproto2.Message):
-        some_int: int = betterproto2.int32_field(1)
-        some_double: float = betterproto2.double_field(2)
-        some_str: str = betterproto2.string_field(3)
-        some_bool: bool = betterproto2.bool_field(4)
-        some_default_int: int = betterproto2.int32_field(5)
-        some_default_double: float = betterproto2.double_field(6)
-        some_default_str: str = betterproto2.string_field(7)
-        some_default_bool: bool = betterproto2.bool_field(8)
-
-    test = TestMessage2().from_dict(
+    test = MsgB().from_dict(
         {
             "someInt": 2,
             "someDouble": 1.2,
@@ -316,7 +250,7 @@ def test_to_dict_default_values():
         "someDefaultBool": False,
     }
 
-    test = TestMessage2().from_pydict(
+    test = MsgB().from_pydict(
         {
             "someInt": 2,
             "someDouble": 1.2,
@@ -338,98 +272,60 @@ def test_to_dict_default_values():
         "someDefaultDouble": 0.0,
         "someDefaultStr": "",
         "someDefaultBool": False,
-    }
-
-    # Nested messages
-    @dataclass
-    class TestChildMessage(betterproto2.Message):
-        some_other_int: int = betterproto2.int32_field(1)
-
-    @dataclass
-    class TestParentMessage(betterproto2.Message):
-        some_int: int = betterproto2.int32_field(1)
-        some_double: float = betterproto2.double_field(2)
-        some_message: Optional[TestChildMessage] = betterproto2.message_field(3)
-
-    test = TestParentMessage().from_dict({"someInt": 0, "someDouble": 1.2})
-
-    assert test.to_dict(include_default_values=True) == {
-        "someInt": 0,
-        "someDouble": 1.2,
-        "someMessage": None,
-    }
-
-    test = TestParentMessage().from_pydict({"someInt": 0, "someDouble": 1.2})
-
-    assert test.to_pydict(include_default_values=True) == {
-        "someInt": 0,
-        "someDouble": 1.2,
-        "someMessage": None,
     }
 
 
 def test_to_dict_datetime_values():
-    @dataclass
-    class TestDatetimeMessage(betterproto2.Message):
-        bar: datetime = betterproto2.message_field(1)
-        baz: timedelta = betterproto2.message_field(2)
+    from tests.output_betterproto.features import TimeMsg
 
-    test = TestDatetimeMessage().from_dict({"bar": "2020-01-01T00:00:00Z", "baz": "86400.000s"})
+    test = TimeMsg().from_dict({"timestamp": "2020-01-01T00:00:00Z", "duration": "86400.000s"})
 
-    assert test.to_dict() == {"bar": "2020-01-01T00:00:00Z", "baz": "86400.000s"}
+    assert test.to_dict() == {"timestamp": "2020-01-01T00:00:00Z", "duration": "86400.000s"}
 
-    test = TestDatetimeMessage().from_pydict({"bar": datetime(year=2020, month=1, day=1), "baz": timedelta(days=1)})
+    test = TimeMsg().from_pydict({"timestamp": datetime(year=2020, month=1, day=1), "duration": timedelta(days=1)})
 
     assert test.to_pydict() == {
-        "bar": datetime(year=2020, month=1, day=1),
-        "baz": timedelta(days=1),
+        "timestamp": datetime(year=2020, month=1, day=1),
+        "duration": timedelta(days=1),
     }
 
 
 def test_oneof_default_value_set_causes_writes_wire():
-    @dataclass
-    class Empty(betterproto2.Message):
-        pass
+    from tests.output_betterproto.features import Empty, MsgC
 
-    @dataclass
-    class Foo(betterproto2.Message):
-        bar: int = betterproto2.int32_field(1, optional=True, group="group1")
-        baz: str = betterproto2.string_field(2, optional=True, group="group1")
-        qux: Empty = betterproto2.message_field(3, optional=True, group="group1")
+    def _round_trip_serialization(msg: MsgC) -> MsgC:
+        return MsgC().parse(bytes(msg))
 
-    def _round_trip_serialization(foo: Foo) -> Foo:
-        return Foo().parse(bytes(foo))
+    int_msg = MsgC(int_field=0)
+    str_msg = MsgC(string_field="")
+    empty_msg = MsgC(empty_field=Empty())
+    msg = MsgC()
 
-    foo1 = Foo(bar=0)
-    foo2 = Foo(baz="")
-    foo3 = Foo(qux=Empty())
-    foo4 = Foo()
-
-    assert bytes(foo1) == b"\x08\x00"
+    assert bytes(int_msg) == b"\x08\x00"
     assert (
-        betterproto2.which_one_of(foo1, "group1")
-        == betterproto2.which_one_of(_round_trip_serialization(foo1), "group1")
-        == ("bar", 0)
+        betterproto2.which_one_of(int_msg, "group1")
+        == betterproto2.which_one_of(_round_trip_serialization(int_msg), "group1")
+        == ("int_field", 0)
     )
 
-    assert bytes(foo2) == b"\x12\x00"  # Baz is just an empty string
+    assert bytes(str_msg) == b"\x12\x00"  # Baz is just an empty string
     assert (
-        betterproto2.which_one_of(foo2, "group1")
-        == betterproto2.which_one_of(_round_trip_serialization(foo2), "group1")
-        == ("baz", "")
+        betterproto2.which_one_of(str_msg, "group1")
+        == betterproto2.which_one_of(_round_trip_serialization(str_msg), "group1")
+        == ("string_field", "")
     )
 
-    assert bytes(foo3) == b"\x1a\x00"
+    assert bytes(empty_msg) == b"\x1a\x00"
     assert (
-        betterproto2.which_one_of(foo3, "group1")
-        == betterproto2.which_one_of(_round_trip_serialization(foo3), "group1")
-        == ("qux", Empty())
+        betterproto2.which_one_of(empty_msg, "group1")
+        == betterproto2.which_one_of(_round_trip_serialization(empty_msg), "group1")
+        == ("empty_field", Empty())
     )
 
-    assert bytes(foo4) == b""
+    assert bytes(msg) == b""
     assert (
-        betterproto2.which_one_of(foo4, "group1")
-        == betterproto2.which_one_of(_round_trip_serialization(foo4), "group1")
+        betterproto2.which_one_of(msg, "group1")
+        == betterproto2.which_one_of(_round_trip_serialization(msg), "group1")
         == ("", None)
     )
 
@@ -453,21 +349,14 @@ def test_bool():
     >>> bool(test)
     ... False
     """
+    from tests.output_betterproto.features import Empty, IntMsg
 
-    @dataclass
-    class Falsy(betterproto2.Message):
-        pass
-
-    @dataclass
-    class Truthy(betterproto2.Message):
-        bar: int = betterproto2.int32_field(1)
-
-    assert not Falsy()
-    t = Truthy()
+    assert not Empty()
+    t = IntMsg()
     assert not t
-    t.bar = 1
+    t.val = 1
     assert t
-    t.bar = 0
+    t.val = 0
     assert not t
 
 
@@ -514,23 +403,19 @@ iso_candidates = """2009-12-12T12:34
 
 
 def test_iso_datetime():
-    @dataclass
-    class Envelope(betterproto2.Message):
-        ts: datetime = betterproto2.message_field(1)
+    from tests.output_betterproto.features import TimeMsg
 
-    msg = Envelope()
+    msg = TimeMsg()
 
     for _, candidate in enumerate(iso_candidates):
-        msg.from_dict({"ts": candidate})
-        assert isinstance(msg.ts, datetime)
+        msg.from_dict({"timestamp": candidate})
+        assert isinstance(msg.timestamp, datetime)
 
 
 def test_iso_datetime_list():
-    @dataclass
-    class Envelope(betterproto2.Message):
-        timestamps: List[datetime] = betterproto2.message_field(1, repeated=True)
+    from tests.output_betterproto.features import MsgD
 
-    msg = Envelope()
+    msg = MsgD()
 
     msg.from_dict({"timestamps": iso_candidates})
     assert all([isinstance(item, datetime) for item in msg.timestamps])
@@ -546,15 +431,12 @@ def test_service_argument__expected_parameter():
 
 
 def test_is_set():
-    @dataclass
-    class Spam(betterproto2.Message):
-        foo: bool = betterproto2.bool_field(1)
-        bar: Optional[int] = betterproto2.int32_field(2, optional=True)
+    from tests.output_betterproto.features import MsgE
 
-    assert not Spam().is_set("foo")
-    assert not Spam().is_set("bar")
-    assert Spam(foo=True).is_set("foo")
-    assert Spam(foo=True, bar=0).is_set("bar")
+    assert not MsgE().is_set("bool_field")
+    assert not MsgE().is_set("int_field")
+    assert MsgE(bool_field=True).is_set("bool_field")
+    assert MsgE(bool_field=True, int_field=0).is_set("int_field")
 
 
 def test_equality_comparison():
