@@ -9,15 +9,16 @@ class Colour(betterproto2.Enum):
     BLUE = 3
 
 
-PURPLE = Colour.__new__(Colour, name=None, value=4)
+PURPLE = Colour(4)
 
 
 @pytest.mark.parametrize(
     "member, str_value",
     [
-        (Colour.RED, "RED"),
-        (Colour.GREEN, "GREEN"),
-        (Colour.BLUE, "BLUE"),
+        (Colour.RED, "Colour.RED"),
+        (Colour.GREEN, "Colour.GREEN"),
+        (Colour.BLUE, "Colour.BLUE"),
+        (PURPLE, "Colour.~UNKNOWN(4)"),
     ],
 )
 def test_str(member: Colour, str_value: str) -> None:
@@ -27,9 +28,10 @@ def test_str(member: Colour, str_value: str) -> None:
 @pytest.mark.parametrize(
     "member, repr_value",
     [
-        (Colour.RED, "Colour.RED"),
-        (Colour.GREEN, "Colour.GREEN"),
-        (Colour.BLUE, "Colour.BLUE"),
+        (Colour.RED, "<Colour.RED: 1>"),
+        (Colour.GREEN, "<Colour.GREEN: 2>"),
+        (Colour.BLUE, "<Colour.BLUE: 3>"),
+        (PURPLE, "<Colour.~UNKNOWN: 4>"),
     ],
 )
 def test_repr(member: Colour, repr_value: str) -> None:
@@ -42,7 +44,7 @@ def test_repr(member: Colour, repr_value: str) -> None:
         (Colour.RED, ("RED", 1)),
         (Colour.GREEN, ("GREEN", 2)),
         (Colour.BLUE, ("BLUE", 3)),
-        (PURPLE, (None, 4)),
+        (PURPLE, ("", 4)),
     ],
 )
 def test_name_values(member: Colour, values: tuple[str | None, int]) -> None:
@@ -70,5 +72,5 @@ def test_from_string(member: Colour, input_str: str) -> None:
         (PURPLE, 4),
     ],
 )
-def test_try_value(member: Colour, input_int: int) -> None:
-    assert Colour.try_value(input_int) == member
+def test_construction(member: Colour, input_int: int) -> None:
+    assert Colour(input_int) == member
