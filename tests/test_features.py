@@ -2,6 +2,7 @@ import json
 from datetime import (
     datetime,
     timedelta,
+    timezone,
 )
 from inspect import (
     Parameter,
@@ -156,10 +157,12 @@ def test_optional_datetime_to_dict():
     # Check dict serialization
     assert OptionalDatetimeMsg().to_dict() == {}
     assert OptionalDatetimeMsg().to_dict(include_default_values=True) == {"field": None}
-    assert OptionalDatetimeMsg(field=datetime(2020, 1, 1)).to_dict() == {"field": "2020-01-01T00:00:00Z"}
-    assert OptionalDatetimeMsg(field=datetime(2020, 1, 1)).to_dict(include_default_values=True) == {
+    assert OptionalDatetimeMsg(field=datetime(2020, 1, 1, tzinfo=timezone.utc)).to_dict() == {
         "field": "2020-01-01T00:00:00Z"
     }
+    assert OptionalDatetimeMsg(field=datetime(2020, 1, 1, tzinfo=timezone.utc)).to_dict(
+        include_default_values=True
+    ) == {"field": "2020-01-01T00:00:00Z"}
 
     # Check pydict serialization
     assert OptionalDatetimeMsg().to_dict(output_format=OutputFormat.PYTHON) == {}
@@ -271,12 +274,10 @@ def test_to_dict_default_values():
 def test_to_dict_datetime_values():
     from tests.output_betterproto.features import TimeMsg
 
-    test = TimeMsg().from_dict({"timestamp": "2020-01-01T00:00:00Z", "duration": "86400.000s"})
-
-    assert test.to_dict() == {"timestamp": "2020-01-01T00:00:00Z", "duration": "86400.000s"}
+    test = TimeMsg().from_dict({"timestamp": "2020-01-01T00:00:00Z", "duration": "86400s"})
+    assert test.to_dict() == {"timestamp": "2020-01-01T00:00:00Z", "duration": "86400s"}
 
     test = TimeMsg().from_pydict({"timestamp": datetime(year=2020, month=1, day=1), "duration": timedelta(days=1)})
-
     assert test.to_dict(output_format=OutputFormat.PYTHON) == {
         "timestamp": datetime(year=2020, month=1, day=1),
         "duration": timedelta(days=1),

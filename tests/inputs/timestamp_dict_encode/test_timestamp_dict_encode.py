@@ -17,7 +17,7 @@ timezones = [timezone(timedelta(minutes=x)) for x in range(MIN_UTC_OFFSET_MIN, M
 
 
 @pytest.mark.parametrize("tz", timezones)
-def test_timezone_aware_datetime_dict_encode(tz: timezone):
+def test_datetime_dict_encode(tz: timezone):
     original_time = datetime.now(tz=tz)
     original_message = Test()
     original_message.ts = original_time
@@ -29,26 +29,10 @@ def test_timezone_aware_datetime_dict_encode(tz: timezone):
     assert original_message.ts.tzinfo is not None
     assert decoded_message.ts.tzinfo is not None
     assert original_message.ts == decoded_message.ts
-
-
-def test_naive_datetime_dict_encode():
-    # make suer naive datetime objects are still treated as utc
-    original_time = datetime.now()
-    assert original_time.tzinfo is None
-    original_message = Test()
-    original_message.ts = original_time
-    original_time_utc = original_time.replace(tzinfo=timezone.utc)
-    encoded = original_message.to_dict()
-    decoded_message = Test()
-    decoded_message.from_dict(encoded)
-
-    # check that the timestamps are equal after decoding from dict
-    assert decoded_message.ts.tzinfo is not None
-    assert original_time_utc == decoded_message.ts
 
 
 @pytest.mark.parametrize("tz", timezones)
-def test_timezone_aware_json_serialize(tz: timezone):
+def test_json_serialize(tz: timezone):
     original_time = datetime.now(tz=tz)
     original_message = Test()
     original_message.ts = original_time
@@ -60,19 +44,3 @@ def test_timezone_aware_json_serialize(tz: timezone):
     assert original_message.ts.tzinfo is not None
     assert decoded_message.ts.tzinfo is not None
     assert original_message.ts == decoded_message.ts
-
-
-def test_naive_datetime_json_serialize():
-    # make suer naive datetime objects are still treated as utc
-    original_time = datetime.now()
-    assert original_time.tzinfo is None
-    original_message = Test()
-    original_message.ts = original_time
-    original_time_utc = original_time.replace(tzinfo=timezone.utc)
-    json_serialized = original_message.to_json()
-    decoded_message = Test()
-    decoded_message.from_json(json_serialized)
-
-    # check that the timestamps are equal after decoding from dict
-    assert decoded_message.ts.tzinfo is not None
-    assert original_time_utc == decoded_message.ts

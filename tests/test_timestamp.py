@@ -5,7 +5,7 @@ from datetime import (
 
 import pytest
 
-from betterproto2 import _Timestamp
+from tests.output_betterproto.google.protobuf import Timestamp
 
 
 @pytest.mark.parametrize(
@@ -24,4 +24,13 @@ def test_timestamp_to_datetime_and_back(dt: datetime):
     Make sure converting a datetime to a protobuf timestamp message
     and then back again ends up with the same datetime.
     """
-    assert _Timestamp.from_datetime(dt).to_datetime() == dt
+    assert Timestamp.from_datetime(dt).to_datetime() == dt
+
+
+def test_invalid_datetime():
+    """
+    Make sure that a ValueError is raised when trying to convert a naive datetime
+    to a protobuf timestamp message.
+    """
+    with pytest.raises(ValueError):
+        Timestamp.from_datetime(datetime.now())
