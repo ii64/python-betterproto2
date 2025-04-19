@@ -13,7 +13,6 @@ from abc import ABC
 from base64 import b64decode, b64encode
 from collections.abc import Callable, Generator, Iterable, Mapping
 from copy import deepcopy
-from datetime import datetime, timedelta, timezone
 from enum import IntEnum
 from io import BytesIO
 from itertools import count
@@ -110,14 +109,6 @@ WIRE_LEN_DELIM_TYPES = [TYPE_STRING, TYPE_BYTES, TYPE_MESSAGE, TYPE_MAP]
 
 # Indicator of message delimitation in streams
 SIZE_DELIMITED = -1
-
-
-# Protobuf datetimes start at the Unix Epoch in 1970 in UTC.
-def datetime_default_gen() -> datetime:
-    return datetime(1970, 1, 1, tzinfo=timezone.utc)
-
-
-DATETIME_ZERO = datetime_default_gen()
 
 
 # Special protobuf json doubles
@@ -224,7 +215,7 @@ def field(
         }[proto_type]
 
     return dataclasses.field(
-        default_factory=default_factory,
+        default_factory=default_factory or dataclasses.MISSING,
         metadata={"betterproto": FieldMetadata(number, proto_type, map_meta, group, unwrap, optional, repeated)},
     )
 
@@ -374,7 +365,7 @@ def load_varint(stream: SupportsRead[bytes]) -> tuple[int, bytes]:
     raw = b""
     for shift in count(0, 7):
         if shift >= 64:
-            raise ValueError("Too many bytes when decoding varint.")
+            break
         b = stream.read(1)
         if not b:
             raise EOFError("Stream ended unexpectedly while attempting to load varint.")
@@ -383,6 +374,8 @@ def load_varint(stream: SupportsRead[bytes]) -> tuple[int, bytes]:
         result |= (b_int & 0x7F) << shift
         if not (b_int & 0x80):
             return result, raw
+
+    raise ValueError("Too many bytes when decoding varint.")
 
 
 def decode_varint(buffer: bytes, pos: int) -> tuple[int, int]:
@@ -480,6 +473,7 @@ class ProtoClassMetadata:
         by_field_name = {}
         by_field_number = {}
 
+        assert dataclasses.is_dataclass(cls)
         fields = dataclasses.fields(cls)
         for field in fields:
             meta = FieldMetadata.get(field)
@@ -498,11 +492,16 @@ class ProtoClassMetadata:
         self.field_name_by_number = by_field_number
         self.meta_by_field_name = by_field_name
         self.sorted_field_names = tuple(by_field_number[number] for number in sorted(by_field_number))
-        self.default_gen = {field.name: field.default_factory for field in fields}
+
+        self.default_gen = {}
+        for field in fields:
+            assert field.default_factory is not dataclasses.MISSING
+            self.default_gen[field.name] = field.default_factory
+
         self.cls_by_field = self._get_cls_by_field(cls, fields)
 
     @staticmethod
-    def _get_cls_by_field(cls: type[Message], fields: Iterable[dataclasses.Field]) -> dict[str, type]:
+    def _get_cls_by_field(cls: type[Message], fields: Iterable[dataclasses.Field]) -> dict[str, type]:  # type: ignore[reportSelfClsParameterName]
         field_cls = {}
 
         for field_ in fields:
@@ -761,7 +760,7 @@ class Message(ABC):
             return stream.getvalue()
 
     # For compatibility with other libraries
-    def SerializeToString(self: T) -> bytes:
+    def SerializeToString(self) -> bytes:
         """
         Get the binary encoded Protobuf representation of this message instance.
 
@@ -1221,13 +1220,8 @@ class Message(ABC):
                     v = getattr(self, field_name)
                     cls = self._betterproto.cls_by_field[field_name]
                     if issubclass(cls, list):
-                        for item in value[key]:
-                            v.append(cls().from_pydict(item))
-                    elif issubclass(cls, datetime):
-                        v = value[key]
-                    elif issubclass(cls, timedelta):
-                        v = value[key]
-                    elif meta.unwraps:
+                        raise NotImplementedError  # TODO look at this
+                    elif meta.unwrap:
                         v = value[key]
                     else:
                         v = cls().from_pydict(value[key])
