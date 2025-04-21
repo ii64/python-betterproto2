@@ -768,14 +768,9 @@ class Message(ABC):
         """
         return bytes(self)
 
-    def __getstate__(self) -> bytes:
-        return bytes(self)
-
-    def __setstate__(self: T, pickled_bytes: bytes) -> T:
-        return self.parse(pickled_bytes)
-
     def __reduce__(self) -> tuple[Any, ...]:
-        return (self.__class__.FromString, (bytes(self),))
+        # To support pickling
+        return (self.__class__.parse, (bytes(self),))
 
     @classmethod
     def _type_hint(cls, field_name: str) -> type:
@@ -829,12 +824,12 @@ class Message(ABC):
                 else:
                     msg_cls = self._betterproto.cls_by_field[field_name]
 
-                value = msg_cls().parse(value)
+                value = msg_cls.parse(value)
 
                 if meta.unwrap:
                     value = value.to_wrapped()
             elif meta.proto_type == TYPE_MAP:
-                value = self._betterproto.cls_by_field[field_name]().parse(value)
+                value = self._betterproto.cls_by_field[field_name].parse(value)
 
         return value
 
@@ -931,7 +926,8 @@ class Message(ABC):
 
         return self
 
-    def parse(self: T, data: bytes) -> T:
+    @classmethod
+    def parse(cls, data: bytes) -> Self:
         """
         Parse the binary encoded Protobuf into this message instance. This
         returns the instance itself and is therefore assignable and chainable.
@@ -947,7 +943,7 @@ class Message(ABC):
             The initialized message.
         """
         with BytesIO(data) as stream:
-            return self.load(stream)
+            return cls().load(stream)
 
     # For compatibility with other libraries.
     @classmethod
@@ -971,7 +967,7 @@ class Message(ABC):
         :class:`Message`
             The initialized message.
         """
-        return cls().parse(data)
+        return cls.parse(data)
 
     def to_dict(
         self,
@@ -1210,21 +1206,22 @@ class Message(ABC):
 Message.__annotations__ = {}  # HACK to avoid typing.get_type_hints breaking :)
 
 
-try:
-    import betterproto2_rust_codec  # pyright: ignore[reportMissingImports]
-except ModuleNotFoundError:
-    pass
-else:
+# The Rust codec is not available for now
+# try:
+#     import betterproto2_rust_codec  # pyright: ignore[reportMissingImports]
+# except ModuleNotFoundError:
+#     pass
+# else:
 
-    def parse_patched(self, data: bytes) -> Message:
-        betterproto2_rust_codec.deserialize(self, data)
-        return self
+#     def parse_patched(self, data: bytes) -> Message:
+#         betterproto2_rust_codec.deserialize(self, data)
+#         return self
 
-    def bytes_patched(self) -> bytes:
-        return betterproto2_rust_codec.serialize(self)
+#     def bytes_patched(self) -> bytes:
+#         return betterproto2_rust_codec.serialize(self)
 
-    Message.parse = parse_patched
-    Message.__bytes__ = bytes_patched
+#     Message.parse = parse_patched
+#     Message.__bytes__ = bytes_patched
 
 
 def which_one_of(message: Message, group_name: str) -> tuple[str, Any | None]:
