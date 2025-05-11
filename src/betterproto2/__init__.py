@@ -20,6 +20,13 @@ from typing import TYPE_CHECKING, Any, ClassVar, get_type_hints
 
 from typing_extensions import Self
 
+try:
+    import pydantic
+    import pydantic_core
+except ImportError:
+    pydantic = None
+    pydantic_core = None
+
 import betterproto2.validators as validators
 from betterproto2.message_pool import MessagePool
 from betterproto2.utils import unwrap
@@ -697,6 +704,26 @@ class Message(ABC):
             cls._betterproto_meta = ProtoClassMetadata(cls)
             return cls._betterproto_meta
 
+    def _is_pydantic(self) -> bool:
+        """
+        Check if the message is a pydantic dataclass.
+        """
+        return pydantic is not None and pydantic.dataclasses.is_pydantic_dataclass(type(self))
+
+    def _validate(self) -> None:
+        """
+        Manually validate the message using pydantic.
+
+        This is useful since pydantic does not revalidate the message when fields are changed. This function doesn't
+        validate the fields recursively.
+        """
+        if not self._is_pydantic():
+            raise TypeError("Validation is only available for pydantic dataclasses.")
+
+        dict = self.__dict__.copy()
+        del dict["_unknown_fields"]
+        pydantic_core.SchemaValidator(self.__pydantic_core_schema__).validate_python(dict)  # type: ignore
+
     def dump(self, stream: SupportsWrite[bytes], delimit: bool = False) -> None:
         """
         Dumps the binary encoded Protobuf message to the stream.
@@ -720,6 +747,9 @@ class Message(ABC):
         """
         Get the binary encoded Protobuf representation of this message instance.
         """
+        if self._is_pydantic():
+            self._validate()
+
         with BytesIO() as stream:
             for field_name, meta in self._betterproto.meta_by_field_name.items():
                 value = getattr(self, field_name)
@@ -822,13 +852,17 @@ class Message(ABC):
         """Adjusts values after parsing."""
         if wire_type == WIRE_VARINT:
             if meta.proto_type in (TYPE_INT32, TYPE_INT64):
-                bits = int(meta.proto_type[3:])
+                bits = 32 if meta.proto_type == TYPE_INT32 else 64
                 value = value & ((1 << bits) - 1)
                 signbit = 1 << (bits - 1)
                 value = int((value ^ signbit) - signbit)
+            elif meta.proto_type in (TYPE_UINT32, TYPE_UINT64):
+                bits = 32 if meta.proto_type == TYPE_UINT32 else 64
+                value = value & ((1 << bits) - 1)
             elif meta.proto_type in (TYPE_SINT32, TYPE_SINT64):
-                # Undo zig-zag encoding
-                value = (value >> 1) ^ (-(value & 1))
+                bits = 32 if meta.proto_type == TYPE_SINT32 else 64
+                value = value & ((1 << bits) - 1)
+                value = (value >> 1) ^ (-(value & 1))  # Undo zig-zag encoding
             elif meta.proto_type == TYPE_BOOL:
                 # Booleans use a varint encoding, so convert it to true/false.
                 value = value > 0
@@ -947,6 +981,9 @@ class Message(ABC):
                 " or the expected size may have been incorrect."
             )
 
+        if self._is_pydantic():
+            self._validate()
+
         return self
 
     @classmethod
@@ -1017,6 +1054,9 @@ class Message(ABC):
         Dict[:class:`str`, Any]
             The JSON serializable dict representation of this object.
         """
+        if self._is_pydantic():
+            self._validate()
+
         kwargs = {  # For recursive calls
             "output_format": output_format,
             "casing": casing,
