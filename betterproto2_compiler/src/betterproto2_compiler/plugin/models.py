@@ -53,6 +53,7 @@ from betterproto2_compiler.lib.google.protobuf import (
     MethodDescriptorProto,
     OneofDescriptorProto,
     ServiceDescriptorProto,
+    SourceCodeInfo,
 )
 from betterproto2_compiler.lib.google.protobuf.compiler import CodeGeneratorRequest
 from betterproto2_compiler.settings import Settings
@@ -216,6 +217,33 @@ class OutputTemplate:
         """
         return sorted([f.name for f in self.input_files])
 
+    def get_descriptor_name(self, source_file: FileDescriptorProto):
+        return f"{source_file.name.replace('/', '_').replace('.', '_').upper()}_DESCRIPTOR"
+
+    @property
+    def descriptors(self):
+        """Google protobuf library descriptors.
+
+        Returns
+        -------
+        str
+            A list of pool registrations for proto descriptors.
+        """
+        descriptors: list[str] = []
+
+        for f in self.input_files:
+            # Remove the source_code_info field since it is not needed at runtime.
+            source_code_info: SourceCodeInfo | None = f.source_code_info
+            f.source_code_info = None
+
+            descriptors.append(
+                f"{self.get_descriptor_name(f)} = default_google_proto_descriptor_pool.AddSerializedFile({bytes(f)})"
+            )
+
+            f.source_code_info = source_code_info
+
+        return "\n".join(descriptors)
+
 
 @dataclass(kw_only=True)
 class MessageCompiler(ProtoContentBase):
@@ -223,6 +251,7 @@ class MessageCompiler(ProtoContentBase):
 
     output_file: OutputTemplate
     proto_obj: DescriptorProto
+    prefixed_proto_name: str
     fields: list["FieldCompiler"] = field(default_factory=list)
     oneofs: list["OneofCompiler"] = field(default_factory=list)
     builtins_types: set[str] = field(default_factory=set)
@@ -233,7 +262,7 @@ class MessageCompiler(ProtoContentBase):
 
     @property
     def py_name(self) -> str:
-        return pythonize_class_name(self.proto_name)
+        return pythonize_class_name(self.prefixed_proto_name)
 
     @property
     def deprecated(self) -> bool:
@@ -265,6 +294,17 @@ class MessageCompiler(ProtoContentBase):
             methods_source.append(source.strip())
 
         return methods_source
+
+    @property
+    def descriptor_name(self) -> str:
+        """Google protobuf library descriptor name.
+
+        Returns
+        -------
+        str
+            The Python name of the descriptor to reference.
+        """
+        return self.output_file.get_descriptor_name(self.source_file)
 
 
 def is_map(proto_field_obj: FieldDescriptorProto, parent_message: DescriptorProto) -> bool:
@@ -562,6 +602,7 @@ class EnumDefinitionCompiler(ProtoContentBase):
 
     output_file: OutputTemplate
     proto_obj: EnumDescriptorProto
+    prefixed_proto_name: str
     entries: list["EnumDefinitionCompiler.EnumEntry"] = field(default_factory=list)
 
     @dataclass(unsafe_hash=True, kw_only=True)
@@ -589,11 +630,22 @@ class EnumDefinitionCompiler(ProtoContentBase):
 
     @property
     def py_name(self) -> str:
-        return pythonize_class_name(self.proto_name)
+        return pythonize_class_name(self.prefixed_proto_name)
 
     @property
     def deprecated(self) -> bool:
         return bool(self.proto_obj.options and self.proto_obj.options.deprecated)
+
+    @property
+    def descriptor_name(self) -> str:
+        """Google protobuf library descriptor name.
+
+        Returns
+        -------
+        str
+            The Python name of the descriptor to reference.
+        """
+        return self.output_file.get_descriptor_name(self.source_file)
 
 
 @dataclass(kw_only=True)

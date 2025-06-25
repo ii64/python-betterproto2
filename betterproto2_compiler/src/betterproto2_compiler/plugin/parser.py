@@ -35,20 +35,21 @@ from .models import (
 
 def traverse(
     proto_file: FileDescriptorProto,
-) -> Generator[tuple[EnumDescriptorProto | DescriptorProto, list[int]], None, None]:
+) -> Generator[tuple[EnumDescriptorProto | DescriptorProto, list[int], str], None, None]:
     # Todo: Keep information about nested hierarchy
     def _traverse(
         path: list[int],
         items: list[EnumDescriptorProto] | list[DescriptorProto],
         prefix: str = "",
-    ) -> Generator[tuple[EnumDescriptorProto | DescriptorProto, list[int]], None, None]:
+    ) -> Generator[tuple[EnumDescriptorProto | DescriptorProto, list[int], str], None, None]:
         for i, item in enumerate(items):
             # Adjust the name since we flatten the hierarchy.
-            # Todo: don't change the name, but include full name in returned tuple
             should_rename = not isinstance(item, DescriptorProto) or not item.options or not item.options.map_entry
 
-            item.name = next_prefix = f"{prefix}.{item.name}" if prefix and should_rename else item.name
-            yield item, [*path, i]
+            # Record prefixed name but *do not* mutate original file.
+            # We use this prefixed name to create pythonized names.
+            prefixed_name = next_prefix = f"{prefix}.{item.name}" if prefix and should_rename else item.name
+            yield item, [*path, i], prefixed_name
 
             if isinstance(item, DescriptorProto):
                 # Get nested types.
@@ -81,6 +82,7 @@ def get_settings(plugin_options: list[str]) -> Settings:
 
     return Settings(
         pydantic_dataclasses="pydantic_dataclasses" in plugin_options,
+        google_protobuf_descriptors="google_protobuf_descriptors" in plugin_options,
         client_generation=client_generation,
         server_generation=server_generation,
     )
@@ -109,12 +111,13 @@ def generate_code(request: CodeGeneratorRequest) -> CodeGeneratorResponse:
     # get the references to input/output messages for each service
     for output_package_name, output_package in request_data.output_packages.items():
         for proto_input_file in output_package.input_files:
-            for item, path in traverse(proto_input_file):
+            for item, path, prefixed_proto_name in traverse(proto_input_file):
                 read_protobuf_type(
                     source_file=proto_input_file,
                     item=item,
                     path=path,
                     output_package=output_package,
+                    prefixed_proto_name=prefixed_proto_name,
                 )
 
     # Read Services
@@ -168,6 +171,15 @@ def generate_code(request: CodeGeneratorRequest) -> CodeGeneratorResponse:
         )
     )
 
+    if settings.google_protobuf_descriptors:
+        response.file.append(
+            CodeGeneratorResponseFile(
+                name="google_proto_descriptor_pool.py",
+                content="from google.protobuf import descriptor_pool\n\n"
+                + "default_google_proto_descriptor_pool = descriptor_pool.DescriptorPool()\n",
+            )
+        )
+
     for output_package_name in sorted(output_paths.union(init_files)):
         print(f"Writing {output_package_name}", file=sys.stderr)
 
@@ -179,6 +191,7 @@ def read_protobuf_type(
     path: list[int],
     source_file: "FileDescriptorProto",
     output_package: OutputTemplate,
+    prefixed_proto_name: str,
 ) -> None:
     if isinstance(item, DescriptorProto):
         if item.options and item.options.map_entry:
@@ -188,10 +201,11 @@ def read_protobuf_type(
         message_data = MessageCompiler(
             source_file=source_file,
             output_file=output_package,
+            prefixed_proto_name=prefixed_proto_name,
             proto_obj=item,
             path=path,
         )
-        output_package.messages[message_data.proto_name] = message_data
+        output_package.messages[message_data.prefixed_proto_name] = message_data
 
         for index, field in enumerate(item.field):
             if is_map(field, item):
@@ -243,10 +257,11 @@ def read_protobuf_type(
         enum = EnumDefinitionCompiler(
             source_file=source_file,
             output_file=output_package,
+            prefixed_proto_name=prefixed_proto_name,
             proto_obj=item,
             path=path,
         )
-        output_package.enums[enum.proto_name] = enum
+        output_package.enums[enum.prefixed_proto_name] = enum
 
 
 def read_protobuf_service(

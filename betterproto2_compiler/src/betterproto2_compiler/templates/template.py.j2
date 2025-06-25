@@ -6,6 +6,13 @@ class {{ enum.py_name | add_to_all }}(betterproto2.Enum):
     """
     {% endif %}
 
+    {% if output_file.settings.google_protobuf_descriptors %}
+    {# Add descriptor class property to be more drop-in compatible with other libraries. #}
+    @betterproto2.classproperty
+    def DESCRIPTOR(self) -> EnumDescriptor:
+        return {{ enum.descriptor_name }}.enum_types_by_name['{{ enum.prefixed_proto_name }}']
+    {% endif %}
+
     {% for entry in enum.entries %}
     {{ entry.name }} = {{ entry.value }}
     {% if entry.comment %}
@@ -45,6 +52,13 @@ class {{ message.py_name | add_to_all }}(betterproto2.Message):
     """
     {% endif %}
 
+    {% if output_file.settings.google_protobuf_descriptors %}
+    {# Add descriptor class property to be more drop-in compatible with other libraries. #}
+    @betterproto2.classproperty
+    def DESCRIPTOR(self) -> Descriptor:
+        return {{ message.descriptor_name }}.message_types_by_name['{{ message.prefixed_proto_name }}']
+    {% endif %}
+
     {% for field in message.fields %}
     {{ field.get_field_string() }}
     {% if field.comment %}
@@ -81,7 +95,7 @@ class {{ message.py_name | add_to_all }}(betterproto2.Message):
     {{ method_source }}
     {% endfor %}
 
-default_message_pool.register_message("{{ output_file.package }}", "{{ message.proto_name }}", {{ message.py_name }})
+default_message_pool.register_message("{{ output_file.package }}", "{{ message.prefixed_proto_name }}", {{ message.py_name }})
 
 
 {% endfor %}
@@ -101,6 +115,11 @@ default_message_pool.register_message("{{ output_file.package }}", "{{ message.p
 {% for i in output_file.imports_end %}
 {{ i }}
 {% endfor %}
+
+{% if output_file.settings.google_protobuf_descriptors %}
+{# Add descriptors to Google protobuf's default pool to be more drop-in compatible with other libraries. #}
+{{ output_file.descriptors }}
+{% endif %}
 
 {% if output_file.settings.server_generation == "async" %}
 {% for _, service in output_file.services|dictsort(by="key") %}
@@ -127,6 +146,10 @@ class {{ (service.py_name + "Base") | add_to_all }}(ServiceBase):
         {% endif %}
 
         raise grpclib.GRPCError(grpclib.const.Status.UNIMPLEMENTED)
+        {% if method.server_streaming %}
+        {# yielding here changes the return type from a coroutine to an async_generator #}
+        yield {{ method.py_output_message_type }}()
+        {% endif %}
 
     {% endfor %}
 
