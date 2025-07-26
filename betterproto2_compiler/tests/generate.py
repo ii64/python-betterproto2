@@ -2,166 +2,178 @@
 import asyncio
 import os
 import shutil
-import sys
-from pathlib import Path
 
-from tests.util import (
-    get_directories,
-    inputs_path,
-    output_path_betterproto,
-    output_path_betterproto_descriptor,
-    output_path_betterproto_pydantic,
-    output_path_reference,
-    protoc,
-)
+from tests.util import protoc
 
 # Force pure-python implementation instead of C++, otherwise imports
 # break things because we can't properly reset the symbol database.
 os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
 
 
-def clear_directory(dir_path: Path):
-    for file_or_directory in dir_path.glob("*"):
-        if file_or_directory.is_dir():
-            shutil.rmtree(file_or_directory)
-        else:
-            file_or_directory.unlink()
+async def generate_test(
+    name,
+    semaphore: asyncio.Semaphore,
+    *,
+    reference: bool = False,
+    pydantic: bool = False,
+    descriptors: bool = False,
+):
+    await semaphore.acquire()
 
+    dir_path = os.path.dirname(os.path.realpath(__file__))
 
-async def generate(verbose: bool):
-    test_case_names = set(get_directories(inputs_path)) - {"__pycache__"}
+    options = []
+    if reference:
+        options.append("reference")
+    if pydantic:
+        options.append("pydantic")
+    if descriptors:
+        options.append("descriptors")
 
-    generation_tasks = []
-    for test_case_name in sorted(test_case_names):
-        test_case_input_path = inputs_path.joinpath(test_case_name).resolve()
-        generation_tasks.append(generate_test_case_output(test_case_input_path, test_case_name, verbose))
+    input_dir = dir_path + "/inputs/" + name
+    output_dir = dir_path + "/outputs/" + name + ("_" + "_".join(options) if options else "")
 
-    failed_test_cases = []
-    # Wait for all subprocs and match any failures to names to report
-    for test_case_name, result in zip(sorted(test_case_names), await asyncio.gather(*generation_tasks)):
-        if result != 0:
-            failed_test_cases.append(test_case_name)
+    os.mkdir(output_dir)
 
-    if len(failed_test_cases) > 0:
-        sys.stderr.write("\n\033[31;1;4mFailed to generate the following test cases:\033[0m\n")
-        for failed_test_case in failed_test_cases:
-            sys.stderr.write(f"- {failed_test_case}\n")
-
-        sys.exit(1)
-
-
-async def generate_test_case_output(test_case_input_path: Path, test_case_name: str, verbose: bool) -> int:
-    """
-    Returns the max of the subprocess return values
-    """
-
-    test_case_output_path_reference = output_path_reference.joinpath(test_case_name)
-    test_case_output_path_betterproto = output_path_betterproto
-    test_case_output_path_betterproto_pyd = output_path_betterproto_pydantic
-    test_case_output_path_betterproto_desc = output_path_betterproto_descriptor
-
-    os.makedirs(test_case_output_path_reference, exist_ok=True)
-    os.makedirs(test_case_output_path_betterproto, exist_ok=True)
-    os.makedirs(test_case_output_path_betterproto_pyd, exist_ok=True)
-    os.makedirs(test_case_output_path_betterproto_desc, exist_ok=True)
-
-    clear_directory(test_case_output_path_reference)
-    clear_directory(test_case_output_path_betterproto)
-    clear_directory(test_case_output_path_betterproto_pyd)
-    clear_directory(test_case_output_path_betterproto_desc)
-
-    (
-        (ref_out, ref_err, ref_code),
-        (plg_out, plg_err, plg_code),
-        (plg_out_pyd, plg_err_pyd, plg_code_pyd),
-        (plg_out_desc, plg_err_desc, plg_code_desc),
-    ) = await asyncio.gather(
-        protoc(test_case_input_path, test_case_output_path_reference, True),
-        protoc(test_case_input_path, test_case_output_path_betterproto, False),
-        protoc(test_case_input_path, test_case_output_path_betterproto_pyd, False, True),
-        protoc(test_case_input_path, test_case_output_path_betterproto_desc, False, False, True),
+    stdout, stderr, returncode = await protoc(
+        input_dir,
+        output_dir,
+        reference=reference,
+        pydantic_dataclasses=pydantic,
+        google_protobuf_descriptors=descriptors,
     )
 
-    if ref_code == 0:
-        print(f"\033[31;1;4mGenerated reference output for {test_case_name!r}\033[0m")
+    if options:
+        options_str = ", ".join(options)
+        options_str = f" ({options_str})"
     else:
-        print(f"\033[31;1;4mFailed to generate reference output for {test_case_name!r}\033[0m")
-        print(ref_err.decode())
+        options_str = ""
 
-    if verbose:
-        if ref_out:
-            print("Reference stdout:")
-            sys.stdout.buffer.write(ref_out)
-            sys.stdout.buffer.flush()
-
-        if ref_err:
-            print("Reference stderr:")
-            sys.stderr.buffer.write(ref_err)
-            sys.stderr.buffer.flush()
-
-    if plg_code == 0:
-        print(f"\033[31;1;4mGenerated plugin output for {test_case_name!r}\033[0m")
+    if returncode == 0:
+        print(f"\033[31;1;4mGenerated output for {name!r}{options_str}\033[0m")
     else:
-        print(f"\033[31;1;4mFailed to generate plugin output for {test_case_name!r}\033[0m")
-        print(plg_err.decode())
+        print(f"\033[31;1;4mFailed to generate reference output for {name!r}{options_str}\033[0m")
+        print(stderr.decode())
 
-    if verbose:
-        if plg_out:
-            print("Plugin stdout:")
-            sys.stdout.buffer.write(plg_out)
-            sys.stdout.buffer.flush()
+    semaphore.release()
 
-        if plg_err:
-            print("Plugin stderr:")
-            sys.stderr.buffer.write(plg_err)
-            sys.stderr.buffer.flush()
 
-    if plg_code_pyd == 0:
-        print(f"\033[31;1;4mGenerated plugin (pydantic compatible) output for {test_case_name!r}\033[0m")
-    else:
-        print(f"\033[31;1;4mFailed to generate plugin (pydantic compatible) output for {test_case_name!r}\033[0m")
-        print(plg_err_pyd.decode())
+async def main_async():
+    # Don't compile too many tests in parallel
+    semaphore = asyncio.Semaphore(os.cpu_count() or 1)
 
-    if verbose:
-        if plg_out_pyd:
-            print("Plugin stdout:")
-            sys.stdout.buffer.write(plg_out_pyd)
-            sys.stdout.buffer.flush()
-
-        if plg_err_pyd:
-            print("Plugin stderr:")
-            sys.stderr.buffer.write(plg_err_pyd)
-            sys.stderr.buffer.flush()
-
-    if plg_code_desc == 0:
-        print(f"\033[31;1;4mGenerated plugin (google protobuf descriptor) output for {test_case_name!r}\033[0m")
-    else:
-        print(
-            f"\033[31;1;4mFailed to generate plugin (google protobuf descriptor) output for {test_case_name!r}\033[0m"
-        )
-        print(plg_err_desc.decode())
-
-    if verbose:
-        if plg_out_desc:
-            print("Plugin stdout:")
-            sys.stdout.buffer.write(plg_out_desc)
-            sys.stdout.buffer.flush()
-
-        if plg_err_desc:
-            print("Plugin stderr:")
-            sys.stderr.buffer.write(plg_err_desc)
-            sys.stderr.buffer.flush()
-
-    return max(ref_code, plg_code, plg_code_pyd, plg_code_desc)
+    tasks = [
+        generate_test("any", semaphore),
+        generate_test("bool", semaphore, pydantic=True),
+        generate_test("bool", semaphore, reference=True),
+        generate_test("bool", semaphore),
+        generate_test("bytes", semaphore, reference=True),
+        generate_test("bytes", semaphore),
+        generate_test("casing_inner_class", semaphore),
+        generate_test("casing", semaphore, reference=True),
+        generate_test("casing", semaphore),
+        generate_test("deprecated", semaphore, reference=True),
+        generate_test("deprecated", semaphore),
+        generate_test("documentation", semaphore),
+        generate_test("double", semaphore, reference=True),
+        generate_test("double", semaphore),
+        generate_test("encoding_decoding", semaphore),
+        generate_test("enum", semaphore, reference=True),
+        generate_test("enum", semaphore),
+        generate_test("example_service", semaphore),
+        generate_test("features", semaphore),
+        generate_test("field_name_identical_to_type", semaphore, reference=True),
+        generate_test("field_name_identical_to_type", semaphore),
+        generate_test("fixed", semaphore, reference=True),
+        generate_test("fixed", semaphore),
+        generate_test("float", semaphore, reference=True),
+        generate_test("float", semaphore),
+        generate_test("google_impl_behavior_equivalence", semaphore, reference=True),
+        generate_test("google_impl_behavior_equivalence", semaphore),
+        generate_test("google", semaphore),
+        generate_test("googletypes_request", semaphore),
+        generate_test("googletypes_response_embedded", semaphore),
+        generate_test("googletypes_response", semaphore),
+        generate_test("googletypes_struct", semaphore, reference=True),
+        generate_test("googletypes_struct", semaphore),
+        generate_test("googletypes_value", semaphore, reference=True),
+        generate_test("googletypes_value", semaphore),
+        generate_test("googletypes", semaphore, reference=True),
+        generate_test("googletypes", semaphore),
+        generate_test("grpclib_reflection", semaphore, descriptors=True),
+        generate_test("grpclib_reflection", semaphore),
+        generate_test("import_cousin_package_same_name", semaphore, descriptors=True),
+        generate_test("import_cousin_package_same_name", semaphore),
+        generate_test("import_service_input_message", semaphore),
+        generate_test("int32", semaphore, reference=True),
+        generate_test("int32", semaphore),
+        generate_test("invalid_field", semaphore, pydantic=True),
+        generate_test("invalid_field", semaphore),
+        generate_test("manual_validation", semaphore, pydantic=True),
+        generate_test("manual_validation", semaphore),
+        generate_test("map", semaphore, reference=True),
+        generate_test("map", semaphore),
+        generate_test("mapmessage", semaphore, reference=True),
+        generate_test("mapmessage", semaphore),
+        generate_test("message_wrapping", semaphore),
+        generate_test("namespace_builtin_types", semaphore, reference=True),
+        generate_test("namespace_builtin_types", semaphore),
+        generate_test("namespace_keywords", semaphore, reference=True),
+        generate_test("namespace_keywords", semaphore),
+        generate_test("nested", semaphore, reference=True),
+        generate_test("nested", semaphore),
+        generate_test("nestedtwice", semaphore, reference=True),
+        generate_test("nestedtwice", semaphore),
+        generate_test("oneof_default_value_serialization", semaphore),
+        generate_test("oneof_empty", semaphore, reference=True),
+        generate_test("oneof_empty", semaphore),
+        generate_test("oneof_enum", semaphore, reference=True),
+        generate_test("oneof_enum", semaphore),
+        generate_test("oneof", semaphore, pydantic=True),
+        generate_test("oneof", semaphore, reference=True),
+        generate_test("oneof", semaphore),
+        generate_test("pickling", semaphore),
+        generate_test("proto3_field_presence_oneof", semaphore, reference=True),
+        generate_test("proto3_field_presence_oneof", semaphore),
+        generate_test("proto3_field_presence", semaphore, reference=True),
+        generate_test("proto3_field_presence", semaphore),
+        generate_test("recursivemessage", semaphore, reference=True),
+        generate_test("recursivemessage", semaphore),
+        generate_test("ref", semaphore, reference=True),
+        generate_test("ref", semaphore),
+        generate_test("regression_387", semaphore),
+        generate_test("regression_414", semaphore),
+        generate_test("repeated_duration_timestamp", semaphore, reference=True),
+        generate_test("repeated_duration_timestamp", semaphore),
+        generate_test("repeated", semaphore, reference=True),
+        generate_test("repeated", semaphore),
+        generate_test("repeatedmessage", semaphore, reference=True),
+        generate_test("repeatedmessage", semaphore),
+        generate_test("repeatedpacked", semaphore, reference=True),
+        generate_test("repeatedpacked", semaphore),
+        generate_test("rpc_empty_input_message", semaphore),
+        generate_test("service_uppercase", semaphore),
+        generate_test("service", semaphore),
+        generate_test("signed", semaphore, reference=True),
+        generate_test("signed", semaphore),
+        generate_test("simple_service", semaphore),
+        generate_test("stream_stream", semaphore),
+        generate_test("timestamp_dict_encode", semaphore, reference=True),
+        generate_test("timestamp_dict_encode", semaphore),
+        generate_test("unwrap", semaphore),
+        generate_test("validation", semaphore, pydantic=True),
+    ]
+    await asyncio.gather(*tasks)
 
 
 def main():
-    if sys.argv[1:2] == ["-v"]:
-        verbose = True
-    else:
-        verbose = False
+    # Clean the output directory
+    dir_path = os.path.dirname(os.path.realpath(__file__))
 
-    asyncio.run(generate(verbose))
+    shutil.rmtree(dir_path + "/outputs", ignore_errors=True)
+    os.mkdir(dir_path + "/outputs")
+
+    asyncio.run(main_async())
 
 
 if __name__ == "__main__":
