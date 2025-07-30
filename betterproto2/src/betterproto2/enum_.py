@@ -1,14 +1,42 @@
-from enum import IntEnum
+import sys
+from enum import EnumMeta, IntEnum
 
 from typing_extensions import Self
 
 
-class Enum(IntEnum):
+class _EnumMeta(EnumMeta):
+    def __new__(metacls, cls, bases, classdict):
+        # Find the proto names if defined
+        if sys.version_info >= (3, 11):
+            proto_names = classdict.pop("betterproto_proto_names", {})
+            classdict._member_names.pop("betterproto_proto_names", None)
+        else:
+            proto_names = {}
+            if "betterproto_proto_names" in classdict:
+                proto_names = classdict.pop("betterproto_proto_names")
+                classdict._member_names.remove("betterproto_proto_names")
+
+        enum_class = super().__new__(metacls, cls, bases, classdict)
+
+        # Attach extra info to each enum member
+        for member in enum_class:
+            value = member.value  # type: ignore[reportAttributeAccessIssue]
+            extra = proto_names.get(value)
+            member._proto_name = extra  # type: ignore[reportAttributeAccessIssue]
+
+        return enum_class
+
+
+class Enum(IntEnum, metaclass=_EnumMeta):
+    @property
+    def proto_name(self) -> str | None:
+        return self._proto_name  # type: ignore[reportAttributeAccessIssue]
+
     @classmethod
     def _missing_(cls, value):
         # If the given value is not an integer, let the standard enum implementation raise an error
         if not isinstance(value, int):
-            return None
+            return
 
         # Create a new "unknown" instance with the given value.
         obj = int.__new__(cls, value)
