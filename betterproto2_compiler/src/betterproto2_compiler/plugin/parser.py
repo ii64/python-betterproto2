@@ -35,20 +35,30 @@ from .models import (
 
 def traverse(
     proto_file: FileDescriptorProto,
-) -> Generator[tuple[EnumDescriptorProto | DescriptorProto, list[int], str], None, None]:
+) -> Generator[
+    tuple[EnumDescriptorProto | DescriptorProto, list[int], str], None, None
+]:
     # Todo: Keep information about nested hierarchy
     def _traverse(
         path: list[int],
         items: list[EnumDescriptorProto] | list[DescriptorProto],
         prefix: str = "",
-    ) -> Generator[tuple[EnumDescriptorProto | DescriptorProto, list[int], str], None, None]:
+    ) -> Generator[
+        tuple[EnumDescriptorProto | DescriptorProto, list[int], str], None, None
+    ]:
         for i, item in enumerate(items):
             # Adjust the name since we flatten the hierarchy.
-            should_rename = not isinstance(item, DescriptorProto) or not item.options or not item.options.map_entry
+            should_rename = (
+                not isinstance(item, DescriptorProto)
+                or not item.options
+                or not item.options.map_entry
+            )
 
             # Record prefixed name but *do not* mutate original file.
             # We use this prefixed name to create pythonized names.
-            prefixed_name = next_prefix = f"{prefix}.{item.name}" if prefix and should_rename else item.name
+            prefixed_name = next_prefix = (
+                f"{prefix}.{item.name}" if prefix and should_rename else item.name
+            )
             yield item, [*path, i], prefixed_name
 
             if isinstance(item, DescriptorProto):
@@ -65,6 +75,9 @@ def get_settings(plugin_options: list[str]) -> Settings:
     client_generation = ClientGeneration.SYNC
     server_generation = ServerGeneration.NONE
 
+    proto_descriptor_pool_package = ""
+    replace_imports = {}
+
     for opt in plugin_options:
         if opt.startswith("client_generation="):
             name = opt.split("=")[1]
@@ -80,16 +93,29 @@ def get_settings(plugin_options: list[str]) -> Settings:
             except ValueError:
                 raise ValueError(f"Invalid server_generation option: {name}")
 
+        if opt.startswith("proto_descriptor_pool_package="):
+            proto_descriptor_pool_package = opt.split("=")[1]
+
+        if opt.startswith("replace_imports"):
+            kv_value = opt.removeprefix("replace_imports=")
+            kv_value_split = kv_value.split("=")
+            replace_imports[kv_value_split[0]] = kv_value_split[1]
+
     return Settings(
+        proto_field_name="proto_field_name" in plugin_options,
         pydantic_dataclasses="pydantic_dataclasses" in plugin_options,
         google_protobuf_descriptors="google_protobuf_descriptors" in plugin_options,
         client_generation=client_generation,
         server_generation=server_generation,
+        proto_descriptor_pool_package=proto_descriptor_pool_package,
+        replace_imports=replace_imports,
     )
 
 
 def generate_code(request: CodeGeneratorRequest) -> CodeGeneratorResponse:
-    response = CodeGeneratorResponse(supported_features=CodeGeneratorResponseFeature.PROTO3_OPTIONAL)
+    response = CodeGeneratorResponse(
+        supported_features=CodeGeneratorResponseFeature.PROTO3_OPTIONAL
+    )
 
     plugin_options = request.parameter.split(",") if request.parameter else []
     settings = get_settings(plugin_options)
@@ -101,7 +127,9 @@ def generate_code(request: CodeGeneratorRequest) -> CodeGeneratorResponse:
         if output_package_name not in request_data.output_packages:
             # Create a new output if there is no output for this package
             request_data.output_packages[output_package_name] = OutputTemplate(
-                parent_request=request_data, package_proto_obj=proto_file, settings=settings
+                parent_request=request_data,
+                package_proto_obj=proto_file,
+                settings=settings,
             )
         # Add this input file to the output corresponding to this package
         request_data.output_packages[output_package_name].input_files.append(proto_file)
@@ -167,7 +195,8 @@ def generate_code(request: CodeGeneratorRequest) -> CodeGeneratorResponse:
 
     response.file.append(
         CodeGeneratorResponseFile(
-            name="message_pool.py", content="import betterproto2\n\ndefault_message_pool = betterproto2.MessagePool()\n"
+            name="message_pool.py",
+            content="import betterproto2\n\ndefault_message_pool = betterproto2.MessagePool()\n",
         )
     )
 
@@ -244,7 +273,9 @@ def read_protobuf_type(
             if field.oneof_index is not None and not field.proto3_optional:
                 is_synthetic_oneof[field.oneof_index] = False
 
-        for index, (oneof, is_synthetic) in enumerate(zip(item.oneof_decl, is_synthetic_oneof)):
+        for index, (oneof, is_synthetic) in enumerate(
+            zip(item.oneof_decl, is_synthetic_oneof)
+        ):
             if not is_synthetic:
                 message_data.oneofs.append(
                     OneofCompiler(
