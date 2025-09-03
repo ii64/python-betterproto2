@@ -72,14 +72,15 @@ def get_symbol_reference(
 
     replaced = settings.replace_imports.get(source_package)
     replaced_package: list[str] = replaced.split(".") if replaced else []
+
     current_package: list[str] = package.split(".") if package else []
     py_package: list[str] = source_package.split(".") if source_package else []
 
-    if replaced_package:
-        return reference_external(replaced_package, imports, symbol)
-
     if py_package == current_package:
         return (reference_sibling(symbol), None)
+
+    if replaced_package:
+        return reference_external(replaced_package, imports, symbol)
 
     if py_package[: len(current_package)] == current_package:
         return reference_descendent(current_package, imports, py_package, symbol)
