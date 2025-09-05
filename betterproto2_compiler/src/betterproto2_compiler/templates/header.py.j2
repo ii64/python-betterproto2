@@ -35,6 +35,12 @@ import grpclib
 from google.protobuf.descriptor import Descriptor, EnumDescriptor
 
 {# Import the message pool of the generated code. #}
+{% if output_file.settings.proto_descriptor_pool_package %}
+from {{ output_file.settings.proto_descriptor_pool_package }}.message_pool import default_message_pool
+{% if output_file.settings.google_protobuf_descriptors %}
+from {{ output_file.settings.proto_descriptor_pool_package }}.google_proto_descriptor_pool import default_google_proto_descriptor_pool
+{% endif %}
+{% else %}
 {% if output_file.package %}
 from {{ "." * output_file.package.count(".") }}..message_pool import default_message_pool
 {% if output_file.settings.google_protobuf_descriptors %}
@@ -44,6 +50,7 @@ from {{ "." * output_file.package.count(".") }}..google_proto_descriptor_pool im
 from .message_pool import default_message_pool
 {% if output_file.settings.google_protobuf_descriptors %}
 from .google_proto_descriptor_pool import default_google_proto_descriptor_pool
+{% endif %}
 {% endif %}
 {% endif %}
 

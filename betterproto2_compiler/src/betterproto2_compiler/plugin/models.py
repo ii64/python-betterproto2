@@ -35,7 +35,10 @@ from dataclasses import (
 from betterproto2 import unwrap
 
 from betterproto2_compiler import casing
-from betterproto2_compiler.compile.importing import get_type_reference, parse_source_type_name
+from betterproto2_compiler.compile.importing import (
+    get_type_reference,
+    parse_source_type_name,
+)
 from betterproto2_compiler.compile.naming import (
     pythonize_class_name,
     pythonize_field_name,
@@ -119,7 +122,9 @@ def get_comment(
                 lines.append("")
 
             # Remove consecutive empty lines
-            lines = [line for i, line in enumerate(lines) if line or (i == 0 or lines[i - 1])]
+            lines = [
+                line for i, line in enumerate(lines) if line or (i == 0 or lines[i - 1])
+            ]
 
             if lines and not lines[-1]:
                 lines.pop()  # Remove the last empty line
@@ -173,7 +178,11 @@ class PluginRequestCompiler:
         List[MessageCompiler]
             List of all of the messages in this request.
         """
-        return [msg for output in self.output_packages.values() for msg in output.messages.values()]
+        return [
+            msg
+            for output in self.output_packages.values()
+            for msg in output.messages.values()
+        ]
 
 
 @dataclass(kw_only=True)
@@ -218,7 +227,9 @@ class OutputTemplate:
         return sorted([f.name for f in self.input_files])
 
     def get_descriptor_name(self, source_file: FileDescriptorProto):
-        return f"{source_file.name.replace('/', '_').replace('.', '_').upper()}_DESCRIPTOR"
+        return (
+            f"{source_file.name.replace('/', '_').replace('.', '_').upper()}_DESCRIPTOR"
+        )
 
     @property
     def descriptors(self):
@@ -307,7 +318,9 @@ class MessageCompiler(ProtoContentBase):
         return self.output_file.get_descriptor_name(self.source_file)
 
 
-def is_map(proto_field_obj: FieldDescriptorProto, parent_message: DescriptorProto) -> bool:
+def is_map(
+    proto_field_obj: FieldDescriptorProto, parent_message: DescriptorProto
+) -> bool:
     """True if proto_field_obj is a map, otherwise False."""
     if proto_field_obj.type == FieldDescriptorProtoType.MESSAGE:
         if not hasattr(parent_message, "nested_type"):
@@ -318,7 +331,11 @@ def is_map(proto_field_obj: FieldDescriptorProto, parent_message: DescriptorProt
         map_entry = f"{proto_field_obj.name.replace('_', '').lower()}entry"
         if message_type == map_entry:
             for nested in parent_message.nested_type:  # parent message
-                if nested.name.replace("_", "").lower() == map_entry and nested.options and nested.options.map_entry:
+                if (
+                    nested.name.replace("_", "").lower() == map_entry
+                    and nested.options
+                    and nested.options.map_entry
+                ):
                     return True
     return False
 
@@ -327,7 +344,9 @@ def is_oneof(proto_field_obj: FieldDescriptorProto) -> bool:
     """
     True if proto_field_obj is a OneOf, otherwise False.
     """
-    return not proto_field_obj.proto3_optional and proto_field_obj.oneof_index is not None
+    return (
+        not proto_field_obj.proto3_optional and proto_field_obj.oneof_index is not None
+    )
 
 
 @dataclass(kw_only=True)
@@ -344,11 +363,11 @@ class FieldCompiler(ProtoContentBase):
     def get_field_string(self) -> str:
         """Construct string representation of this field as a field."""
         name = f"{self.py_name}"
-        field_args = ", ".join(([""] + self.betterproto_field_args) if self.betterproto_field_args else [])
-
-        betterproto_field_type = (
-            f"betterproto2.field({self.proto_obj.number}, betterproto2.TYPE_{str(self.field_type)}{field_args})"
+        field_args = ", ".join(
+            ([""] + self.betterproto_field_args) if self.betterproto_field_args else []
         )
+
+        betterproto_field_type = f"betterproto2.field({self.proto_obj.number}, betterproto2.TYPE_{str(self.field_type)}{field_args})"
         if self.py_name in dir(builtins):
             self.message.builtins_types.add(self.py_name)
         return f'{name}: "{self.annotation}" = {betterproto_field_type}'
@@ -370,6 +389,11 @@ class FieldCompiler(ProtoContentBase):
             args.append("repeated=True")
         elif self.field_type == FieldType.ENUM:
             args.append(f"default_factory=lambda: {self.py_type}(0)")
+
+        # Include original protobuf field name in the generated output.
+        if self.output_file.settings.proto_field_name:
+            args.append(f'name="{self.proto_name}"')
+
         return args
 
     @property
@@ -389,7 +413,9 @@ class FieldCompiler(ProtoContentBase):
     @property
     def optional(self) -> bool:
         # TODO not for maps
-        return self.proto_obj.proto3_optional or (self.field_type == FieldType.MESSAGE and not self.repeated)
+        return self.proto_obj.proto3_optional or (
+            self.field_type == FieldType.MESSAGE and not self.repeated
+        )
 
     @property
     def field_type(self) -> FieldType:
@@ -413,7 +439,9 @@ class FieldCompiler(ProtoContentBase):
     @property
     def is_wrapped(self) -> bool:
         assert self.field_type == FieldDescriptorProtoType.MESSAGE
-        type_package, type_name = parse_source_type_name(self.proto_obj.type_name, self.output_file.parent_request)
+        type_package, type_name = parse_source_type_name(
+            self.proto_obj.type_name, self.output_file.parent_request
+        )
 
         return (type_package, type_name) in WRAPPED_TYPES
 
@@ -457,23 +485,35 @@ class FieldCompiler(ProtoContentBase):
 
         annotations = []
 
-        if self.proto_obj.type in (FieldType.INT32, FieldType.SFIXED32, FieldType.SINT32):
+        if self.proto_obj.type in (
+            FieldType.INT32,
+            FieldType.SFIXED32,
+            FieldType.SINT32,
+        ):
             annotations.append("pydantic.Field(ge=-2**31, le=2**31 - 1)")
 
         elif self.proto_obj.type in (FieldType.UINT32, FieldType.FIXED32):
             annotations.append("pydantic.Field(ge=0, le=2**32 - 1)")
 
-        elif self.proto_obj.type in (FieldType.INT64, FieldType.SFIXED64, FieldType.SINT64):
+        elif self.proto_obj.type in (
+            FieldType.INT64,
+            FieldType.SFIXED64,
+            FieldType.SINT64,
+        ):
             annotations.append("pydantic.Field(ge=-2**63, le=2**63 - 1)")
 
         elif self.proto_obj.type in (FieldType.UINT64, FieldType.FIXED64):
             annotations.append("pydantic.Field(ge=0, le=2**64 - 1)")
 
         elif self.proto_obj.type == FieldType.FLOAT:
-            annotations.append("pydantic.AfterValidator(betterproto2.validators.validate_float32)")
+            annotations.append(
+                "pydantic.AfterValidator(betterproto2.validators.validate_float32)"
+            )
 
         elif self.proto_obj.type == FieldType.STRING:
-            annotations.append("pydantic.AfterValidator(betterproto2.validators.validate_string)")
+            annotations.append(
+                "pydantic.AfterValidator(betterproto2.validators.validate_string)"
+            )
 
         return annotations
 
@@ -506,7 +546,9 @@ class OneOfFieldCompiler(FieldCompiler):
     @property
     def betterproto_field_args(self) -> list[str]:
         args = super().betterproto_field_args
-        group = self.message.proto_obj.oneof_decl[unwrap(self.proto_obj.oneof_index)].name
+        group = self.message.proto_obj.oneof_decl[
+            unwrap(self.proto_obj.oneof_index)
+        ].name
         args.append(f'group="{group}"')
         return args
 
@@ -524,7 +566,10 @@ class MapEntryCompiler(FieldCompiler):
         """Explore nested types and set k_type and v_type if unset."""
         map_entry = f"{self.proto_obj.name.replace('_', '').lower()}entry"
         for nested in self.message.proto_obj.nested_type:
-            if nested.name.replace("_", "").lower() == map_entry and unwrap(nested.options).map_entry:
+            if (
+                nested.name.replace("_", "").lower() == map_entry
+                and unwrap(nested.options).map_entry
+            ):
                 # Get Python types
                 assert nested.field[0].name == "key"
                 self.py_k_type = FieldCompiler(
@@ -552,8 +597,12 @@ class MapEntryCompiler(FieldCompiler):
                     self.unwrap_v = None
 
                 # Get proto types
-                self.proto_k_type = unwrap(FieldDescriptorProtoType(nested.field[0].type).name)
-                self.proto_v_type = unwrap(FieldDescriptorProtoType(nested.field[1].type).name)
+                self.proto_k_type = unwrap(
+                    FieldDescriptorProtoType(nested.field[0].type).name
+                )
+                self.proto_v_type = unwrap(
+                    FieldDescriptorProtoType(nested.field[1].type).name
+                )
                 return
 
         raise ValueError("can't find enum")
@@ -571,7 +620,8 @@ class MapEntryCompiler(FieldCompiler):
             "betterproto2.field("
             f"{self.proto_obj.number}, "
             "betterproto2.TYPE_MAP, "
-            f"map_meta=betterproto2.map_meta({proto_type_1}, {proto_type_2}{unwrap_2})"
+            f"map_meta=betterproto2.map_meta({proto_type_1}, {proto_type_2}{unwrap_2}), "
+            f'name="{self.proto_name}"'
             ")"
         )
         if self.py_name in dir(builtins):
@@ -620,7 +670,9 @@ class EnumDefinitionCompiler(ProtoContentBase):
                 name=entry_proto_value.name,
                 proto_name=entry_proto_value.name,
                 value=entry_proto_value.number,
-                comment=get_comment(proto_file=self.source_file, path=self.path + [2, entry_number]),
+                comment=get_comment(
+                    proto_file=self.source_file, path=self.path + [2, entry_number]
+                ),
             )
             for entry_number, entry_proto_value in enumerate(self.proto_obj.value)
         ]
@@ -642,7 +694,9 @@ class EnumDefinitionCompiler(ProtoContentBase):
                 enum_prefix = f"{first_entry[: i + 1]}_"
                 break
 
-        should_rename = enum_prefix and all(entry.name.startswith(enum_prefix) for entry in self.entries)
+        should_rename = enum_prefix and all(
+            entry.name.startswith(enum_prefix) for entry in self.entries
+        )
 
         if should_rename:
             for entry in self.entries:
@@ -711,7 +765,11 @@ class ServiceMethodCompiler(ProtoContentBase):
 
     @property
     def route(self) -> str:
-        package_part = f"{self.parent.output_file.package}." if self.parent.output_file.package else ""
+        package_part = (
+            f"{self.parent.output_file.package}."
+            if self.parent.output_file.package
+            else ""
+        )
         return f"/{package_part}{self.parent.proto_name}/{self.proto_name}"
 
     @property
@@ -735,9 +793,13 @@ class ServiceMethodCompiler(ProtoContentBase):
 
     @property
     def is_input_msg_empty(self: "ServiceMethodCompiler") -> bool:
-        package, name = parse_source_type_name(self.proto_obj.input_type, self.parent.output_file.parent_request)
+        package, name = parse_source_type_name(
+            self.proto_obj.input_type, self.parent.output_file.parent_request
+        )
 
-        msg = self.parent.output_file.parent_request.output_packages[package].messages[name]
+        msg = self.parent.output_file.parent_request.output_packages[package].messages[
+            name
+        ]
 
         return not bool(msg.fields)
 

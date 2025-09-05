@@ -53,11 +53,17 @@ class ClientGeneration(StrEnum):
 
     @property
     def is_sync_prefixed(self) -> bool:
-        return self in {ClientGeneration.ASYNC_SYNC, ClientGeneration.SYNC_ASYNC_NO_DEFAULT}
+        return self in {
+            ClientGeneration.ASYNC_SYNC,
+            ClientGeneration.SYNC_ASYNC_NO_DEFAULT,
+        }
 
     @property
     def is_async_prefixed(self) -> bool:
-        return self in {ClientGeneration.SYNC_ASYNC, ClientGeneration.SYNC_ASYNC_NO_DEFAULT}
+        return self in {
+            ClientGeneration.SYNC_ASYNC,
+            ClientGeneration.SYNC_ASYNC_NO_DEFAULT,
+        }
 
 
 class ServerGeneration(StrEnum):
@@ -69,6 +75,9 @@ class ServerGeneration(StrEnum):
 class Settings:
     pydantic_dataclasses: bool
     google_protobuf_descriptors: bool
+    proto_field_name: bool
+    proto_descriptor_pool_package: str
+    replace_imports: dict[str, str]
 
     client_generation: ClientGeneration
     server_generation: ServerGeneration

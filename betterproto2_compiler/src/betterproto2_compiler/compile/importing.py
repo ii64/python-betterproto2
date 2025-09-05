@@ -15,7 +15,9 @@ if TYPE_CHECKING:
     from ..plugin.models import PluginRequestCompiler
 
 
-def parse_source_type_name(field_type_name: str, request: PluginRequestCompiler) -> tuple[str, str]:
+def parse_source_type_name(
+    field_type_name: str, request: PluginRequestCompiler
+) -> tuple[str, str]:
     """
     Split full source type name into package and type name.
     E.g. 'root.package.Message' -> ('root.package', 'Message')
@@ -61,16 +63,24 @@ def get_symbol_reference(
     imports: set,
     source_package: str,
     symbol: str,
+    settings: Settings,
 ) -> tuple[str, str | None]:
     """
     Return a Python symbol within a proto package. Adds the import if
     necessary and returns it as well for usage. Unwraps well known type if required.
     """
+
+    replaced = settings.replace_imports.get(source_package)
+    replaced_package: list[str] = replaced.split(".") if replaced else []
+
     current_package: list[str] = package.split(".") if package else []
     py_package: list[str] = source_package.split(".") if source_package else []
 
     if py_package == current_package:
         return (reference_sibling(symbol), None)
+
+    if replaced_package:
+        return reference_external(replaced_package, imports, symbol)
 
     if py_package[: len(current_package)] == current_package:
         return reference_descendent(current_package, imports, py_package, symbol)
@@ -105,11 +115,14 @@ def get_type_reference(
         imports=imports,
         source_package=source_package,
         symbol=py_type,
+        settings=settings,
     )
     return ref
 
 
-def reference_absolute(imports: set[str], py_package: list[str], py_type: str) -> tuple[str, str]:
+def reference_absolute(
+    imports: set[str], py_package: list[str], py_type: str
+) -> tuple[str, str]:
     """
     Returns a reference to a python type located in the root, i.e. sys.path.
     """
@@ -183,15 +196,42 @@ def reference_cousin(
     """
     shared_ancestry = os.path.commonprefix([current_package, py_package])  # type: ignore
     distance_up = len(current_package) - len(shared_ancestry)
-    string_from = f".{'.' * distance_up}" + ".".join(py_package[len(shared_ancestry) : -1])
+    string_from = f".{'.' * distance_up}" + ".".join(
+        py_package[len(shared_ancestry) : -1]
+    )
     string_import = py_package[-1]
     # Add trailing __ to avoid name mangling (python.org/dev/peps/pep-0008/#id34)
     # string_alias = f"{'_' * distance_up}" + safe_snake_case(".".join(py_package[len(shared_ancestry) :])) + "__"
     string_alias = (
         f"{'_' * distance_up}"
-        + "__".join([safe_snake_case(name) for name in py_package[len(shared_ancestry) :]])
+        + "__".join(
+            [safe_snake_case(name) for name in py_package[len(shared_ancestry) :]]
+        )
         + "__"
     )
     import_to_add = f"from {string_from} import {string_import} as {string_alias}"
+    imports.add(import_to_add)
+    return (f"{string_alias}.{py_type}", import_to_add)
+
+
+def reference_external(
+    py_package: list[str], imports: set[str], py_type: str
+) -> tuple[str, str]:
+    """
+    Returns a reference to external package
+    """
+
+    def alias_fx(pkg: list[str]):
+        return "__" + "__".join(safe_snake_case(name) for name in pkg) + "__"
+
+    if len(py_package) == 1:
+        string_alias = alias_fx(py_package)
+        import_to_add = f"import {py_package[0]} as {string_alias}"
+    else:
+        string_from = ".".join(py_package[:-1])
+        string_import = py_package[-1]
+        string_alias = alias_fx(py_package)
+        import_to_add = f"from {string_from} import {string_import} as {string_alias}"
+
     imports.add(import_to_add)
     return (f"{string_alias}.{py_type}", import_to_add)

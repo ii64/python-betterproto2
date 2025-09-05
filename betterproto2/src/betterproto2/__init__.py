@@ -178,6 +178,9 @@ class FieldMetadata:
     # Is the field repeated
     repeated: bool | None = False
 
+    # Protobuf field name
+    name: str | None = False
+
     @staticmethod
     def get(field: dataclasses.Field) -> FieldMetadata:
         """Returns the field metadata for a dataclass field."""
@@ -206,6 +209,7 @@ def field(
     unwrap: Callable[[], type] | None = None,
     optional: bool = False,
     repeated: bool = False,
+    name: str | None = None,
 ) -> Any:  # Return type is Any to pass type checking
     """Creates a dataclass field with attached protobuf metadata."""
     if repeated:
@@ -238,7 +242,18 @@ def field(
 
     return dataclasses.field(
         default_factory=default_factory or dataclasses.MISSING,
-        metadata={"betterproto": FieldMetadata(number, proto_type, map_meta, group, unwrap, optional, repeated)},
+        metadata={
+            "betterproto": FieldMetadata(
+                number,
+                proto_type,
+                map_meta,
+                group,
+                unwrap,
+                optional,
+                repeated,
+                name=name,
+            )
+        },
     )
 
 
@@ -279,7 +294,9 @@ def encode_varint(value: int) -> bytes:
         return stream.getvalue()
 
 
-def _preprocess_single(proto_type: str, unwrap: Callable[[], type] | None, value: Any) -> bytes:
+def _preprocess_single(
+    proto_type: str, unwrap: Callable[[], type] | None, value: Any
+) -> bytes:
     """Adjusts values before serialization."""
     if proto_type in (
         TYPE_ENUM,
@@ -467,7 +484,9 @@ def parse_fields(value: bytes) -> Generator[ParsedField, None, None]:
         elif wire_type == WIRE_FIXED_32:
             decoded, i = value[i : i + 4], i + 4
 
-        yield ParsedField(number=number, wire_type=wire_type, value=decoded, raw=value[start:i])
+        yield ParsedField(
+            number=number, wire_type=wire_type, value=decoded, raw=value[start:i]
+        )
 
 
 class ProtoClassMetadata:
@@ -506,7 +525,9 @@ class ProtoClassMetadata:
         self.oneof_field_by_group = by_group
         self.field_name_by_number = by_field_number
         self.meta_by_field_name = by_field_name
-        self.sorted_field_names = tuple(by_field_number[number] for number in sorted(by_field_number))
+        self.sorted_field_names = tuple(
+            by_field_number[number] for number in sorted(by_field_number)
+        )
 
         self.default_gen = {}
         for field in fields:
@@ -527,9 +548,13 @@ class ProtoClassMetadata:
                 vt = cls._cls_for(field_, index=1)
 
                 if meta.map_meta[1].proto_type == TYPE_ENUM:
-                    value_field = field(2, meta.map_meta[1].proto_type, default_factory=lambda: vt(0))
+                    value_field = field(
+                        2, meta.map_meta[1].proto_type, default_factory=lambda: vt(0)
+                    )
                 else:
-                    value_field = field(2, meta.map_meta[1].proto_type, unwrap=meta.map_meta[1].unwrap)
+                    value_field = field(
+                        2, meta.map_meta[1].proto_type, unwrap=meta.map_meta[1].unwrap
+                    )
 
                 field_cls[field_.name] = dataclasses.make_dataclass(
                     "Entry",
@@ -619,7 +644,11 @@ def _value_from_dict(value: Any, meta: FieldMetadata, field_type: type) -> Any:
 
     if meta.proto_type == TYPE_ENUM:
         if isinstance(value, str):
-            if (int_value := field_type.betterproto_renamed_proto_names_to_value().get(value)) is not None:
+            if (
+                int_value := field_type.betterproto_renamed_proto_names_to_value().get(
+                    value
+                )
+            ) is not None:
                 return field_type(int_value)
             return field_type.from_string(value)
         if isinstance(value, int):
@@ -724,7 +753,9 @@ class Message(ABC):
         """
         Check if the message is a pydantic dataclass.
         """
-        return pydantic is not None and pydantic.dataclasses.is_pydantic_dataclass(type(self))
+        return pydantic is not None and pydantic.dataclasses.is_pydantic_dataclass(
+            type(self)
+        )
 
     def _validate(self) -> None:
         """
@@ -805,8 +836,15 @@ class Message(ABC):
                 elif meta.map_meta:
                     for k, v in value.items():
                         sk = _serialize_single(1, meta.map_meta[0].proto_type, k)
-                        sv = _serialize_single(2, meta.map_meta[1].proto_type, v, unwrap=meta.map_meta[1].unwrap)
-                        stream.write(_serialize_single(meta.number, meta.proto_type, sk + sv))
+                        sv = _serialize_single(
+                            2,
+                            meta.map_meta[1].proto_type,
+                            v,
+                            unwrap=meta.map_meta[1].unwrap,
+                        )
+                        stream.write(
+                            _serialize_single(meta.number, meta.proto_type, sk + sv)
+                        )
                 else:
                     stream.write(
                         _serialize_single(
@@ -853,7 +891,11 @@ class Message(ABC):
     def _cls_for(cls, field: dataclasses.Field, index: int = 0) -> type:
         """Get the message class for a field from the type hints."""
         field_cls = cls._type_hint(field.name)
-        if hasattr(field_cls, "__args__") and index >= 0 and field_cls.__args__ is not None:
+        if (
+            hasattr(field_cls, "__args__")
+            and index >= 0
+            and field_cls.__args__ is not None
+        ):
             field_cls = field_cls.__args__[index]
         return field_cls
 
@@ -863,7 +905,9 @@ class Message(ABC):
             warnings.filterwarnings("ignore", category=DeprecationWarning)
             return self._betterproto.default_gen[field_name]()
 
-    def _postprocess_single(self, wire_type: int, meta: FieldMetadata, field_name: str, value: Any) -> Any:
+    def _postprocess_single(
+        self, wire_type: int, meta: FieldMetadata, field_name: str, value: Any
+    ) -> Any:
         """Adjusts values after parsing."""
         if wire_type == WIRE_VARINT:
             if meta.proto_type in (TYPE_INT32, TYPE_INT64, TYPE_ENUM):
@@ -944,7 +988,9 @@ class Message(ABC):
 
             meta = proto_meta.meta_by_field_name[field_name]
 
-            is_packed_repeated = parsed.wire_type == WIRE_LEN_DELIM and meta.proto_type in PACKED_TYPES
+            is_packed_repeated = (
+                parsed.wire_type == WIRE_LEN_DELIM and meta.proto_type in PACKED_TYPES
+            )
 
             value: Any
             if is_packed_repeated:
@@ -961,10 +1007,14 @@ class Message(ABC):
                     else:
                         decoded, pos = decode_varint(parsed.value, pos)
                         wire_type = WIRE_VARINT
-                    decoded = self._postprocess_single(wire_type, meta, field_name, decoded)
+                    decoded = self._postprocess_single(
+                        wire_type, meta, field_name, decoded
+                    )
                     value.append(decoded)
             else:
-                value = self._postprocess_single(parsed.wire_type, meta, field_name, parsed.value)
+                value = self._postprocess_single(
+                    parsed.wire_type, meta, field_name, parsed.value
+                )
 
             current = getattr(self, field_name)
 
@@ -1094,7 +1144,12 @@ class Message(ABC):
                 field_type = field_types[field_name]
 
             if meta.repeated:
-                output_value = [_value_to_dict(v, meta.proto_type, field_type, meta.unwrap, **kwargs)[0] for v in value]
+                output_value = [
+                    _value_to_dict(
+                        v, meta.proto_type, field_type, meta.unwrap, **kwargs
+                    )[0]
+                    for v in value
+                ]
                 if output_value or include_default_values:
                     output[cased_name] = output_value
 
@@ -1103,9 +1158,17 @@ class Message(ABC):
                 field_type_k = field_types[field_name].__args__[0]
                 field_type_v = field_types[field_name].__args__[1]
                 output_map = {
-                    _value_to_dict(k, meta.map_meta[0].proto_type, field_type_k, None, **kwargs)[0]: _value_to_dict(
-                        v, meta.map_meta[1].proto_type, field_type_v, meta.map_meta[1].unwrap, **kwargs
-                    )[0]
+                    _value_to_dict(
+                        k, meta.map_meta[0].proto_type, field_type_k, None, **kwargs
+                    )[0]: _value_to_dict(
+                        v,
+                        meta.map_meta[1].proto_type,
+                        field_type_v,
+                        meta.map_meta[1].unwrap,
+                        **kwargs,
+                    )[
+                        0
+                    ]
                     for k, v in value.items()
                 }
 
@@ -1116,7 +1179,9 @@ class Message(ABC):
                 if value is None:
                     output_value, is_default = None, True
                 else:
-                    output_value, is_default = _value_to_dict(value, meta.proto_type, field_type, meta.unwrap, **kwargs)
+                    output_value, is_default = _value_to_dict(
+                        value, meta.proto_type, field_type, meta.unwrap, **kwargs
+                    )
                     if meta.optional:
                         is_default = False
 
@@ -1126,7 +1191,9 @@ class Message(ABC):
         return output
 
     @classmethod
-    def _from_dict_init(cls, mapping: Mapping[str, Any] | Any, *, ignore_unknown_fields: bool) -> Mapping[str, Any]:
+    def _from_dict_init(
+        cls, mapping: Mapping[str, Any] | Any, *, ignore_unknown_fields: bool
+    ) -> Mapping[str, Any]:
         init_kwargs: dict[str, Any] = {}
         for key, value in mapping.items():
             field_name = safe_snake_case(key)
@@ -1141,7 +1208,9 @@ class Message(ABC):
                 if ignore_unknown_fields:
                     continue
 
-                raise KeyError(f"Unknown field '{field_name}' in message {cls.__name__}.") from None
+                raise KeyError(
+                    f"Unknown field '{field_name}' in message {cls.__name__}."
+                ) from None
 
             if value is None:
                 name, module = field_cls.__name__, field_cls.__module__
@@ -1164,7 +1233,9 @@ class Message(ABC):
                 value_cls = cls._betterproto.cls_by_field[f"{field_name}.value"]
 
                 value = {
-                    _value_from_dict(k, meta.map_meta[0], type(None)): _value_from_dict(v, meta.map_meta[1], value_cls)
+                    _value_from_dict(k, meta.map_meta[0], type(None)): _value_from_dict(
+                        v, meta.map_meta[1], value_cls
+                    )
                     for k, v in value.items()
                 }
 
@@ -1178,7 +1249,12 @@ class Message(ABC):
         return init_kwargs
 
     @classmethod
-    def from_dict(cls: type[Self], value: Mapping[str, Any] | Any, *, ignore_unknown_fields: bool = False) -> Self:
+    def from_dict(
+        cls: type[Self],
+        value: Mapping[str, Any] | Any,
+        *,
+        ignore_unknown_fields: bool = False,
+    ) -> Self:
         """
         Parse the key/value pairs into the a new message instance.
 
@@ -1235,7 +1311,9 @@ class Message(ABC):
         )
 
     @classmethod
-    def from_json(cls, value: str | bytes, *, ignore_unknown_fields: bool = False) -> Self:
+    def from_json(
+        cls, value: str | bytes, *, ignore_unknown_fields: bool = False
+    ) -> Self:
         """A helper function to return the message instance from its JSON
         representation. This returns the instance itself and is therefore assignable
         and chainable.
@@ -1254,7 +1332,9 @@ class Message(ABC):
         :class:`Message`
             The initialized message.
         """
-        return cls.from_dict(json.loads(value), ignore_unknown_fields=ignore_unknown_fields)
+        return cls.from_dict(
+            json.loads(value), ignore_unknown_fields=ignore_unknown_fields
+        )
 
     def is_set(self, name: str) -> bool:
         """
@@ -1288,11 +1368,17 @@ class Message(ABC):
                 if meta.optional:
                     continue
 
-            set_fields = [field.name for field in field_set if getattr(values, field.name, None) is not None]
+            set_fields = [
+                field.name
+                for field in field_set
+                if getattr(values, field.name, None) is not None
+            ]
 
             if len(set_fields) > 1:
                 set_fields_str = ", ".join(set_fields)
-                raise ValueError(f"Group {group} has more than one value; fields {set_fields_str} are not None")
+                raise ValueError(
+                    f"Group {group} has more than one value; fields {set_fields_str} are not None"
+                )
 
         return values
 
@@ -1333,7 +1419,9 @@ def which_one_of(message: Message, group_name: str) -> tuple[str, Any | None]:
 
         if v is not None:
             if field_name:
-                raise RuntimeError(f"more than one field set in oneof: {field.name} and {field_name}")
+                raise RuntimeError(
+                    f"more than one field set in oneof: {field.name} and {field_name}"
+                )
             field_name, value = field.name, v
 
     return field_name, value
